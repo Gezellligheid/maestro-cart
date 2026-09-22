@@ -617,18 +617,19 @@ export class Track {
     blurCircular(bankMask, 8, 2);
     for (const tu of this.tunnels) for (let i = tu.a - 2; i <= tu.b + 2; i++) bankMask[circ(i)] = 0;
     for (const br of this.bridges) for (let i = br.a; i <= br.b; i++) bankMask[circ(i)] = 0;
-    const bankFactor = (t.id === 'rainbow' ? 1.3 : 0.7) + rand() * 0.5;
-    const maxBank = t.id === 'rainbow' ? 0.4 : 0.32; // tan of ~22° / ~18°
+    // Real banking tilts the road about its centre line: the outside edge rises, the inside
+    // edge drops (the terrain is shaped to meet both), so corners never become humps.
+    // Fast sweepers get the most bank; tight hairpins, taken slowly, only a little.
+    const bankFactor = (t.id === 'rainbow' ? 1.25 : 0.8) + rand() * 0.4;
+    const maxBank = t.id === 'rainbow' ? 0.29 : 0.21; // tan of ~16° / ~12°
     for (let i = 0; i < S; i++) {
-      const curv = wrap(this.yaw[circ(i + 3)] - this.yaw[circ(i - 3)]) / (6 * seg); // rad per metre, + = left turn
-      this.slope[i] = Math.max(-maxBank, Math.min(maxBank, curv * 9 * bankFactor));
+      const curv = wrap(this.yaw[circ(i + 4)] - this.yaw[circ(i - 4)]) / (8 * seg); // rad/m, + = left turn
+      const radius = 1 / Math.max(1e-4, Math.abs(curv));
+      const hairpinEase = 0.3 + 0.7 * smooth01((radius - 22) / 30); // slow corners: less bank
+      this.slope[i] = Math.max(-maxBank, Math.min(maxBank, curv * 11 * bankFactor * hairpinEase));
     }
-    blurCircular(this.slope, 5, 2);
-    for (let i = 0; i < S; i++) {
-      this.slope[i] *= bankMask[i];
-      // Lift banked corners so the low (inner) edge never dips below the ground.
-      this.height[i] += Math.abs(this.slope[i]) * (this.width[i] + CURB_WIDTH + BARRIER_GAP + 0.7);
-    }
+    blurCircular(this.slope, 6, 2); // build the bank up gradually into and out of the corner
+    for (let i = 0; i < S; i++) this.slope[i] *= bankMask[i];
 
     // Boost pads: random ones plus one lined up before every jump.
     const padLen = Math.max(3, Math.round(6 / seg));
@@ -763,10 +764,16 @@ export class Track {
       const d = dx * dx + dz * dz;
       if (d < best) { best = d; j = i; }
     }
-    const d = Math.sqrt(best) - (this.barrierOffset(j) + 0.7);
+    const edgeOff = this.barrierOffset(j) + 0.7;
+    const d = Math.sqrt(best) - edgeOff;
+    const lat = -(x - this.px[j]) * this.tz[j] + (z - this.pz[j]) * this.tx[j];
+    // Banked road height at this lateral position (capped at the edge), ignoring bridge/jump
+    // rises (those get side walls). Under the road the ground stays just below the tarmac.
+    const clampedLat = Math.max(-edgeOff, Math.min(edgeOff, lat));
+    const edgeY = this.baseHeight[j] + this.slope[j] * clampedLat - (d < 0 ? 0.6 : 0);
     const near = 1 - smooth01(d / 38);
     const far = Math.max(0, this._noise(x, z)) * (this.theme.groundNoise || 0) * smooth01((d - 8) / 40);
-    let y = this.baseHeight[j] * near + far;
+    let y = edgeY * near + far;
     if (this.theme.ocean) {
       const r = Math.hypot(x, z);
       if (r > this.oceanRadius) y = -1.5;
@@ -854,19 +861,22 @@ export class Track {
 
       // Shoulders out to the railings, and side walls wherever the road is raised.
       const deck = this._deckAt(i);
-      // Raised if either edge sits above the terrain (bridges, jumps, banked corners).
-      const e0 = edge(W(i));
-      const raised = Math.max(RY(i, e0), RY(i, -e0)) - this.baseHeight[i] > 0.05 || hAt(i + 1) - this.baseHeight[circ(i + 1)] > 0.02;
+      // Raised above the terrain (bridges, overpasses, jumps); banking itself is met by the ground.
+      const raised = hAt(i) - this.baseHeight[i] > 0.02 || hAt(i + 1) - this.baseHeight[circ(i + 1)] > 0.02;
       const shoulder = raised ? 0x9aa0a8 : R.shoulder;
       band(i, (w) => w + CURB_WIDTH, edge, 0.045, shoulder);
       band(i, (w) => -edge(w), (w) => -w - CURB_WIDTH, 0.045, shoulder);
       if (raised || t.space) {
         const slab = t.space || deck;
-        const b0 = slab ? hAt(i) - (t.space ? 1.2 : 0.9) : this.baseHeight[i] - 0.4;
-        const b1 = slab ? hAt(i + 1) - (t.space ? 1.2 : 0.9) : this.baseHeight[circ(i + 1)] - 0.4;
-        const hex = slab ? 0x7d828a : 0xa08c74;
-        skirt(i, edge, b0, b1, t.space ? rainbowColor(Math.floor(i / 4)) : hex);
-        skirt(i, (w) => -edge(w), b0, b1, t.space ? rainbowColor(Math.floor(i / 4)) : hex);
+        const hex = t.space ? rainbowColor(Math.floor(i / 4)) : slab ? 0x7d828a : 0xa08c74;
+        const thick = t.space ? 1.2 : 0.9;
+        for (const sgn of [1, -1]) {
+          // Bottom follows this side's edge: a thin slab under decks, down to the terrain otherwise.
+          const l0 = sgn * edge(W(i)), l1 = sgn * edge(W(i + 1));
+          const b0 = slab ? RY(i, l0) - thick : this.baseHeight[i] + this.slope[circ(i)] * l0 - 0.4;
+          const b1 = slab ? RY(i + 1, l1) - thick : this.baseHeight[circ(i + 1)] + this.slope[circ(i + 1)] * l1 - 0.4;
+          skirt(i, sgn > 0 ? edge : (w) => -edge(w), b0, b1, hex);
+        }
         if (t.space) band(i, (w) => -edge(w), edge, -1.2, 0x2a1f5c); // underside
       }
       // Jump ramps get hazard chevrons.

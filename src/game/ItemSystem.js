@@ -551,7 +551,7 @@ export class ItemSystem {
   _isSquashed(k, karts) {
     for (let j = 0; j < karts.length; j++) {
       const o = karts[j];
-      if (o === k || o.shrinkTimer > 0 || Math.abs(o.y - k.y) > 3) continue;
+      if (o === k || o.shrinkTimer > 0 || Math.abs(o.y - k.y) > 4) continue;
       const reach = KART.radius * (k.megaScale + o.megaScale) + 0.3;
       const dx = k.netX - o.netX, dz = k.netZ - o.netZ;
       if (dx * dx + dz * dz < reach * reach) return true;

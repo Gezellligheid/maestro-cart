@@ -81,7 +81,7 @@ export class Particles {
       const i3 = i * 3;
       this.vel[i3 + 1] += this.gravity[i] * dt;
       this.pos[i3] += this.vel[i3] * dt;
-      this.pos[i3 + 1] = Math.max(0.05, this.pos[i3 + 1] + this.vel[i3 + 1] * dt);
+      this.pos[i3 + 1] += this.vel[i3 + 1] * dt;
       this.pos[i3 + 2] += this.vel[i3 + 2] * dt;
       i++;
     }

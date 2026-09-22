@@ -31,7 +31,8 @@ export class Physics {
   }
 
   addGround(halfSize) {
-    const body = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, -1, 0));
+    // Safety floor well below the terrain; the road trimesh is the real driving surface.
+    const body = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, -31, 0));
     const desc = RAPIER.ColliderDesc.cuboid(halfSize, 1, halfSize)
       .setFriction(0)
       .setCollisionGroups(groups(COLLISION.GROUND, ALL));
