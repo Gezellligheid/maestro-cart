@@ -631,17 +631,29 @@ export class Track {
     blurCircular(this.slope, 6, 2); // build the bank up gradually into and out of the corner
     for (let i = 0; i < S; i++) this.slope[i] *= bankMask[i];
 
-    // Boost pads: random ones plus one lined up before every jump.
+    // Boost pads only on straights: no bend or banking within ~30 m either side, so a boost
+    // never throws you into a corner.
     const padLen = Math.max(3, Math.round(6 / seg));
+    const margin = Math.ceil(30 / seg);
+    const straight = (a, b) => {
+      const ref = this.yaw[circ(a)];
+      for (let i = a - margin; i <= b + margin; i++) {
+        if (Math.abs(wrap(this.yaw[circ(i)] - ref)) > 0.08) return false; // no bend before or after
+        if (Math.abs(this.slope[circ(i)]) > 0.02) return false; // no banking (= no corner)
+      }
+      return true;
+    };
     for (const jp of this.jumps) {
       const a = jp.a - Math.round(16 / seg);
-      this.pads.push({ a, b: a + padLen, lat: 0, half: 1.9 });
+      if (straight(a, a + padLen)) this.pads.push({ a, b: a + padLen, lat: 0, half: 1.9 });
     }
     const wantPads = range(t.pads);
-    for (let tries = 0; tries < 80 && this.pads.length < wantPads + this.jumps.length; tries++) {
+    const target = wantPads + this.pads.length;
+    for (let tries = 0; tries < 150 && this.pads.length < target; tries++) {
       const a = Math.floor(rand() * S);
       if (circDist(a, 0) < Math.ceil(50 / seg)) continue;
       if (this.pads.some((p) => circDist(p.a, a) < 25)) continue;
+      if (!straight(a, a + padLen)) continue;
       const w = this.width[circ(a)] - 2.4;
       this.pads.push({ a, b: a + padLen, lat: (rand() * 2 - 1) * w, half: 1.9 });
     }

@@ -53,7 +53,12 @@ export class Physics {
 
   /** Static triangle mesh in the GROUND group (bridge decks and ramps). */
   addTrimesh(vertices, indices) {
-    const desc = RAPIER.ColliderDesc.trimesh(vertices, indices)
+    // FIX_INTERNAL_EDGES stops the kart ball catching on the seams between triangles, which
+    // otherwise kicks it into the air on perfectly flat road. Needs consistently up-facing
+    // triangles (ORIENTED) with shared vertices merged.
+    const F = RAPIER.TriMeshFlags;
+    const flags = F.FIX_INTERNAL_EDGES | F.ORIENTED | F.MERGE_DUPLICATE_VERTICES;
+    const desc = RAPIER.ColliderDesc.trimesh(vertices, indices, flags)
       .setFriction(0)
       .setCollisionGroups(groups(COLLISION.GROUND, ALL));
     return this.world.createCollider(desc);
@@ -70,7 +75,7 @@ export class Physics {
     const body = this.world.createRigidBody(bodyDesc);
     const colDesc = RAPIER.ColliderDesc.ball(KART.radius)
       .setFriction(0)
-      .setRestitution(0.25)
+      .setRestitution(0) // no bouncing off the road; kart-vs-kart knock-back is done in code
       .setMass(KART.mass)
       .setCollisionGroups(groups(COLLISION.KART, ALL));
     this.world.createCollider(colDesc, body);
@@ -101,6 +106,20 @@ export class Physics {
     ray.dir.x = 0; ray.dir.y = -1; ray.dir.z = 0;
     const hit = this.world.castRay(ray, maxDist, true, this.solidFilter, this.groundGroups);
     return hit ? hit.timeOfImpact : -1;
+  }
+
+  /**
+   * Downward ray against the ground that also reports the surface normal (written to `n`).
+   * Returns the distance or -1.
+   */
+  groundProbe(x, y, z, maxDist, n) {
+    const ray = this._ray;
+    ray.origin.x = x; ray.origin.y = y; ray.origin.z = z;
+    ray.dir.x = 0; ray.dir.y = -1; ray.dir.z = 0;
+    const hit = this.world.castRayAndGetNormal(ray, maxDist, true, this.solidFilter, this.groundGroups);
+    if (!hit) return -1;
+    n.x = hit.normal.x; n.y = hit.normal.y; n.z = hit.normal.z;
+    return hit.timeOfImpact;
   }
 
   /**

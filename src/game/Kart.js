@@ -59,6 +59,8 @@ export class Kart {
     this.bumpX = 0; this.bumpZ = 0; // knock-back velocity from kart collisions
     this.bumpCooldown = 0;
     this.padCooldown = 0;
+    this.airTimer = 0; // after a hop, ignore ground contact briefly so the hop isn't cancelled
+    this._n = { x: 0, y: 1, z: 0 }; // ground normal under the kart
 
     // Interpolated render state
     this.x = spawn.x; this.y = KART.radius; this.z = spawn.z;
@@ -146,8 +148,12 @@ export class Kart {
     if (this.magnetTimer > 0) this.magnetTimer -= dt;
     this._updateScale(dt);
 
-    const gd = this.physics.groundDistance(t.x, t.y, t.z, this.radius + 0.3);
-    this.grounded = gd >= 0 && v.y < 3;
+    // Ground contact: within reach of the surface (slopes/banks included) and not mid-hop.
+    if (this.airTimer > 0) this.airTimer -= dt;
+    const gd = this.physics.groundProbe(t.x, t.y, t.z, this.radius * 1.3 + 0.35, this._n);
+    const rest = this.radius / Math.max(0.5, this._n.y); // centre height above a touching surface
+    this.grounded = gd >= 0 && this._n.y > 0.5 && this.airTimer <= 0 && gd <= rest + 0.35;
+    this.touching = this.grounded && gd <= rest + 0.08;
 
     let sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
     // Separate out the knock-back component so the arcade model works on the kart's own motion.
@@ -241,6 +247,7 @@ export class Kart {
       // --- hop & drift ---
       if (driftPressed) {
         vy = C.hopVelocity;
+        this.airTimer = 0.15;
         this.grounded = false;
         this.driftWindow = C.driftWindow;
       }
@@ -282,7 +289,18 @@ export class Kart {
     this.bumpX *= decay; this.bumpZ *= decay;
     if (this.bumpCooldown > 0) this.bumpCooldown -= dt;
     vel.x = sin * fwd + -cos * lat + this.bumpX;
-    vel.y = vy;
+    // On the ground, keep the velocity along the surface (hills, banks, ramps) instead of
+    // driving horizontally into it — that's what made karts bounce. Off a jump ramp the road
+    // drops away, the probe loses contact and the kart flies with its ramp velocity.
+    if (this.touching && vy < 3) {
+      const n = this._n;
+      vel.y = -(n.x * vel.x + n.z * vel.z) / n.y;
+    } else if (this.grounded && vy < 3) {
+      // Just above the road (small crest): pull down firmly so the kart settles instead of floating.
+      vel.y = vy - 30 * dt;
+    } else {
+      vel.y = vy;
+    }
     vel.z = cos * fwd + sin * lat + this.bumpZ;
     this.body.setLinvel(vel, true);
 
