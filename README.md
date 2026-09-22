@@ -24,6 +24,8 @@ public broker handles signalling only; gameplay traffic is direct WebRTC.
   cosmetic parts (bodies, spoilers, wheels, headgear) plus paint/accent colours, previewed in 3D and
   shown to everyone in the room. Everything lasts for that room / solo session only — leaving to the
   menu resets it. CPU karts get upgrades as rounds progress.
+- **CPU racers**: in a room the host fills empty grid slots with CPU karts (adjustable in the lobby,
+  default: fill all 8 slots). The host simulates them and streams their state like any kart.
 - **Ready-up**: in a room every player marks Ready in the lobby and again between rounds; the
   race starts when everyone is ready (the host can also skip the wait).
 - **Style parts** are previewed on the showroom kart when clicked and only bought via the Buy button.

@@ -53,6 +53,17 @@
             <p class="text-xs font-bold uppercase tracking-widest text-white/50">Drivers <span id="player-count"></span></p>
             <ul id="player-list" class="mt-2 flex flex-col gap-1.5"></ul>
           </div>
+          <div class="flex items-center justify-between gap-3 rounded-xl bg-black/25 px-3 py-2">
+            <div>
+              <p class="text-sm font-bold">CPU racers</p>
+              <p id="cpu-hint" class="text-xs text-white/50"></p>
+            </div>
+            <div class="flex items-center gap-2">
+              <button id="cpu-minus" class="btn btn-ghost h-8 w-8 p-0 text-lg" aria-label="Fewer CPU racers">−</button>
+              <b id="cpu-count" class="w-6 text-center text-lg tabular-nums">0</b>
+              <button id="cpu-plus" class="btn btn-ghost h-8 w-8 p-0 text-lg" aria-label="More CPU racers">+</button>
+            </div>
+          </div>
           <button id="btn-ready" class="btn btn-primary"><i data-lucide="check"></i><span>Ready</span></button>
           <p id="ready-status" class="text-center text-sm text-white/60"></p>
           <button id="btn-start" class="btn btn-ghost text-sm"><i data-lucide="flag"></i>Start now (skip ready-up)</button>

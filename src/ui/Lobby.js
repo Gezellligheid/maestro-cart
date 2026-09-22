@@ -45,6 +45,8 @@ export class Lobby {
     });
     $('btn-start').addEventListener('click', () => this.h.onStart());
     $('btn-ready').addEventListener('click', () => this.h.onReady());
+    $('cpu-minus').addEventListener('click', () => this.h.onCpu(-1));
+    $('cpu-plus').addEventListener('click', () => this.h.onCpu(1));
     $('btn-leave').addEventListener('click', () => this.h.onLeave());
     $('btn-copy').addEventListener('click', () => this._copy());
     $('btn-room-garage').addEventListener('click', () => this.h.onGarage());
@@ -119,6 +121,16 @@ export class Lobby {
     btn.classList.toggle('btn-primary', !(me && me.ready));
     btn.classList.toggle('btn-secondary', !!(me && me.ready));
     $('ready-status').textContent = `${readyCount}/${players.length} ready — the race starts when everyone is ready`;
+  }
+
+  /** CPU racers row: only the host can change it; everyone sees the grid size. */
+  setCpu(count, isHost, humans) {
+    $('cpu-count').textContent = String(count);
+    $('cpu-minus').classList.toggle('hidden', !isHost);
+    $('cpu-plus').classList.toggle('hidden', !isHost);
+    $('cpu-minus').disabled = count <= 0;
+    $('cpu-plus').disabled = humans + count >= MAX_KARTS;
+    $('cpu-hint').textContent = `Fill empty slots · grid: ${humans} player${humans === 1 ? '' : 's'} + ${count} CPU`;
   }
 
   setStatus(text, isError = false) {

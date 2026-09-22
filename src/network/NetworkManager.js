@@ -47,6 +47,8 @@ export class NetworkManager {
     this.localName = 'Player';
     this.localLook = null; // kart cosmetics, shared through the roster
     this.localReady = false; // host's own ready-up state
+    this.cpuWanted = MAX_KARTS; // host: CPU racers requested (clamped to free slots)
+    this.cpuCount = 0; // effective CPU racers for the next race (host decides)
     this.players = []; // [{ slot, name }]
     this.clients = new Map(); // host: slot -> { conn, fast, name }
     this.hostConn = null;
@@ -80,6 +82,7 @@ export class NetworkManager {
     this.localLook = sanitizeLook(look);
     this.localReady = false;
     this.players = [{ slot: 0, name, look: this.localLook, ready: false }];
+    this.cpuCount = Math.min(this.cpuWanted, MAX_KARTS - 1);
     this.acceptingPlayers = true;
 
     return new Promise((resolve, reject) => {
@@ -131,8 +134,8 @@ export class NetworkManager {
       const fast = this._openFastChannel(conn, (data) => this._emit('state', data, slot));
       this.clients.set(slot, { conn, fast, name, look: sanitizeLook(conn.metadata?.look), ready: false });
       this._rebuildRoster();
-      conn.send({ t: 'welcome', slot, players: this.players });
-      this.broadcast({ t: 'roster', players: this.players });
+      conn.send({ t: 'welcome', slot, players: this.players, cpu: this.cpuCount });
+      this.broadcast({ t: 'roster', players: this.players, cpu: this.cpuCount });
       this._emit('roster', this.players);
 
       conn.on('data', (msg) => {
@@ -163,14 +166,14 @@ export class NetworkManager {
     try { c.fast?.close(); } catch { /* already closed */ }
     try { conn.close(); } catch { /* already closed */ }
     this._rebuildRoster();
-    this.broadcast({ t: 'roster', players: this.players });
+    this.broadcast({ t: 'roster', players: this.players, cpu: this.cpuCount });
     this._emit('peer-left', slot);
     this._emit('roster', this.players);
   }
 
   _publishRoster() {
     this._rebuildRoster();
-    this.broadcast({ t: 'roster', players: this.players });
+    this.broadcast({ t: 'roster', players: this.players, cpu: this.cpuCount });
     this._emit('roster', this.players);
   }
 
@@ -205,10 +208,17 @@ export class NetworkManager {
     return this.players.length > 0 && this.players.every((p) => p.ready);
   }
 
+  /** Host: change the requested number of CPU racers. */
+  setCpuWanted(n) {
+    this.cpuWanted = Math.max(0, Math.min(MAX_KARTS - 1, n));
+    this._publishRoster();
+  }
+
   _rebuildRoster() {
     this.players = [{ slot: 0, name: this.localName, look: this.localLook, ready: this.localReady }];
     for (const [slot, c] of this.clients) this.players.push({ slot, name: c.name, look: c.look, ready: c.ready });
     this.players.sort((a, b) => a.slot - b.slot);
+    this.cpuCount = Math.min(this.cpuWanted, MAX_KARTS - this.players.length);
   }
 
   // ------------------------------------------------------------------ client
@@ -254,6 +264,7 @@ export class NetworkManager {
             settled = true;
             this.localSlot = msg.slot;
             this.players = msg.players;
+            this.cpuCount = Math.max(0, Math.min(MAX_KARTS - 1, msg.cpu | 0));
             this._emit('roster', this.players);
             resolve(msg.slot);
             return;
@@ -265,6 +276,7 @@ export class NetworkManager {
           }
           if (msg.t === 'roster') {
             this.players = msg.players;
+            this.cpuCount = Math.max(0, Math.min(MAX_KARTS - 1, msg.cpu | 0));
             this._emit('roster', this.players);
             return;
           }

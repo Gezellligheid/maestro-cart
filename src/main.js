@@ -95,6 +95,7 @@ class Game {
       onJoin: (code, name) => this.joinRoom(code, name),
       onStart: () => this.startHostRace(),
       onReady: () => this.toggleReady(),
+      onCpu: (d) => { if (this.mode === 'host') this.net.setCpuWanted(this.net.cpuCount + d); },
       onLeave: () => this.toMenu(),
       onGarage: () => this.openGarage(),
     });
@@ -145,12 +146,13 @@ class Game {
     const net = this.net;
     net.on('roster', (players) => {
       this.lobby.setPlayers(players, net.localSlot);
+      this.lobby.setCpu(net.cpuCount, this.mode === 'host' || net.isHost, players.length);
       if (this.results.visible) this._refreshResults();
       this._maybeAutoStart();
       if (this.inRace) {
         // Drop karts whose drivers left mid-race.
         const present = new Set(players.map((p) => p.slot));
-        for (const k of [...this.karts]) if (k.control === 'remote' && !present.has(k.slot)) this._removeKart(k.slot);
+        for (const k of [...this.karts]) if (k.control === 'remote' && !k.isCpu && !present.has(k.slot)) this._removeKart(k.slot);
       }
     });
     net.on('peer-left', (slot) => {
@@ -177,6 +179,7 @@ class Game {
       this.mode = 'host';
       this.lobby.showRoom({ code, isHost: true, link: this.net.shareLink() });
       this.lobby.setPlayers(this.net.players, 0);
+      this.lobby.setCpu(this.net.cpuCount, true, this.net.players.length);
       this.lobby.setStatus('Share the code or link with friends, then start the race.');
     } catch (err) {
       this.lobby.setStatus(`Couldn't create room: ${err.message || err}`, true);
@@ -194,6 +197,7 @@ class Game {
       this.mode = 'client';
       this.lobby.showRoom({ code: this.net.roomCode, isHost: false, link: this.net.shareLink() });
       this.lobby.setPlayers(this.net.players, this.net.localSlot);
+      this.lobby.setCpu(this.net.cpuCount, false, this.net.players.length);
       this.lobby.setStatus('');
     } catch (err) {
       this.net.destroy();
@@ -242,13 +246,21 @@ class Game {
   startHostRace() {
     if (this.mode !== 'host') return;
     const players = this.net.players.map((p) => ({ slot: p.slot, name: p.name, look: p.slot === 0 ? this.garage.look : p.look }));
+    // Fill the free slots with CPU racers; the host simulates them and streams their state.
+    const used = new Set(players.map((p) => p.slot));
+    const cpuNames = CPU_NAMES.slice().sort(() => Math.random() - 0.5);
+    for (let slot = 0, n = 0; slot < MAX_KARTS && n < this.net.cpuCount; slot++) {
+      if (used.has(slot)) continue;
+      players.push({ slot, name: cpuNames[n % cpuNames.length], look: randomLook(), cpu: true });
+      n++;
+    }
     this.net.acceptingPlayers = false;
     clearTimeout(this._autoStart);
     this._autoStart = null;
     this.net.resetReady();
     const seed = randomSeed();
     this.net.broadcast({ t: 'start', players, countdown: COUNTDOWN_MS, seed });
-    this._setupRace(players.map((p) => ({ ...p, control: p.slot === 0 ? 'local' : 'remote' })), COUNTDOWN_MS, seed);
+    this._setupRace(players.map((p) => ({ ...p, control: p.cpu ? 'bot' : p.slot === 0 ? 'local' : 'remote' })), COUNTDOWN_MS, seed);
   }
 
   _startClientRace(msg) {
@@ -258,7 +270,8 @@ class Game {
       name: String(p.name).slice(0, 16),
       control: p.slot === mySlot ? 'local' : 'remote',
       look: p.slot === mySlot ? this.garage.look : sanitizeLook(p.look),
-    }));
+      cpu: !!p.cpu,
+    })).filter((p) => p.slot >= 0 && p.slot < MAX_KARTS);
     this._setupRace(roster, msg.countdown, msg.seed >>> 0);
   }
 
@@ -297,6 +310,7 @@ class Game {
         track: this.track,
         spawn,
       });
+      kart.isCpu = !!entry.cpu || entry.control === 'bot';
       this.karts.push(kart);
       this.kartBySlot[entry.slot] = kart;
       if (entry.control === 'local') {
