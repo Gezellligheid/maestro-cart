@@ -884,15 +884,26 @@ export class Track {
     return spots;
   }
 
+  /**
+   * Coins scattered around the lap as singles and small clusters at random lateral positions.
+   * Seeded, so every peer gets the same list (coin pickups are addressed by index).
+   */
   _coinSpots() {
+    const rand = mulberry32(this.seed ^ 0xc01c0);
     const spots = [];
     const tmp = { x: 0, z: 0 };
-    const lines = [[0.07, 4], [0.3, -4.5], [0.4, 0], [0.62, 5], [0.87, -3]];
-    for (const [frac, lat] of lines) {
-      const start = Math.round(frac * S);
-      for (let k = 0; k < 6; k++) {
-        this.pointAt(start + k * 3, lat, 0, tmp);
-        spots.push({ x: tmp.x, z: tmp.z, y: this.heightAt(start + k * 3) });
+    const TOTAL = 30;
+    const boxRows = [0.2, 0.48, 0.77].map((f) => Math.round(f * S));
+    while (spots.length < TOTAL) {
+      const i = 30 + Math.floor(rand() * (S - 50)); // keep the start grid clear
+      if (boxRows.some((r) => Math.abs(r - i) < 8)) continue;
+      const size = Math.min(TOTAL - spots.length, 1 + Math.floor(rand() * rand() * 4)); // mostly 1–2
+      const lat = (rand() - 0.5) * 14;
+      for (let k = 0; k < size; k++) {
+        const j = i + k * 2;
+        const l = Math.max(-7.5, Math.min(7.5, lat + (rand() - 0.5) * 3));
+        this.pointAt(j, l, 0, tmp);
+        spots.push({ x: tmp.x, z: tmp.z, y: this.heightAt(j) });
       }
     }
     return spots;

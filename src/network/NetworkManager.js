@@ -46,6 +46,7 @@ export class NetworkManager {
     this.localSlot = 0;
     this.localName = 'Player';
     this.localLook = null; // kart cosmetics, shared through the roster
+    this.localReady = false; // host's own ready-up state
     this.players = []; // [{ slot, name }]
     this.clients = new Map(); // host: slot -> { conn, fast, name }
     this.hostConn = null;
@@ -77,7 +78,8 @@ export class NetworkManager {
     this.localSlot = 0;
     this.localName = name;
     this.localLook = sanitizeLook(look);
-    this.players = [{ slot: 0, name, look: this.localLook }];
+    this.localReady = false;
+    this.players = [{ slot: 0, name, look: this.localLook, ready: false }];
     this.acceptingPlayers = true;
 
     return new Promise((resolve, reject) => {
@@ -127,7 +129,7 @@ export class NetworkManager {
       }
       const name = String(conn.metadata?.name || `Player ${slot + 1}`).slice(0, 16);
       const fast = this._openFastChannel(conn, (data) => this._emit('state', data, slot));
-      this.clients.set(slot, { conn, fast, name, look: sanitizeLook(conn.metadata?.look) });
+      this.clients.set(slot, { conn, fast, name, look: sanitizeLook(conn.metadata?.look), ready: false });
       this._rebuildRoster();
       conn.send({ t: 'welcome', slot, players: this.players });
       this.broadcast({ t: 'roster', players: this.players });
@@ -135,9 +137,10 @@ export class NetworkManager {
 
       conn.on('data', (msg) => {
         if (!msg || typeof msg !== 'object') return;
-        if (msg.t === 'look') {
+        if (msg.t === 'look' || msg.t === 'ready') {
           const c = this.clients.get(slot);
-          if (c) c.look = sanitizeLook(msg.look);
+          if (c && msg.t === 'look') c.look = sanitizeLook(msg.look);
+          if (c && msg.t === 'ready') c.ready = !!msg.r;
           this._publishRoster();
           return;
         }
@@ -181,9 +184,30 @@ export class NetworkManager {
     }
   }
 
+  /** Ready-up for the next race (host decides when everyone is ready). */
+  setReady(ready) {
+    if (this.isHost) {
+      this.localReady = !!ready;
+      if (this.peer) this._publishRoster();
+    } else {
+      this.send({ t: 'ready', r: !!ready });
+    }
+  }
+
+  /** Host: clear everyone's ready flag (called when a race starts). */
+  resetReady() {
+    this.localReady = false;
+    for (const c of this.clients.values()) c.ready = false;
+    this._publishRoster();
+  }
+
+  get allReady() {
+    return this.players.length > 0 && this.players.every((p) => p.ready);
+  }
+
   _rebuildRoster() {
-    this.players = [{ slot: 0, name: this.localName, look: this.localLook }];
-    for (const [slot, c] of this.clients) this.players.push({ slot, name: c.name, look: c.look });
+    this.players = [{ slot: 0, name: this.localName, look: this.localLook, ready: this.localReady }];
+    for (const [slot, c] of this.clients) this.players.push({ slot, name: c.name, look: c.look, ready: c.ready });
     this.players.sort((a, b) => a.slot - b.slot);
   }
 

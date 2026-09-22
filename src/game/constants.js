@@ -43,15 +43,15 @@ export const KART = Object.freeze({
   steerRise: 4.5, // how fast steering input ramps in (per second)
   steerFall: 9, // ...and recentres
   highSpeedSteerLoss: 0.35, // fraction of steering lost at top speed
-  driftTurnBoost: 1.3, // drifts turn tighter than grip steering
+  driftTurnBoost: 1.05, // drifts turn slightly tighter than grip steering
   airTurnFactor: 0.35,
   grip: 16, // lateral velocity damping on tarmac
   offroadGrip: 9,
-  driftGrip: 2.6,
-  driftSlide: 0.55, // outward slide injected per second while drifting
+  driftGrip: 4.2,
+  driftSlide: 0.3, // outward slide injected per second while drifting
   driftMinSpeed: 12,
-  driftTurnBase: 0.55,
-  driftTurnRange: 0.5,
+  driftTurnBase: 0.5,
+  driftTurnRange: 0.35,
   driftWindow: 0.6, // seconds after hop in which a drift can be engaged
   hopVelocity: 5.2,
   offroadFactor: 0.52,
@@ -62,6 +62,9 @@ export const KART = Object.freeze({
   coinBonusCap: 10, // ...up to 10 coins
   maxCoins: 30, // coins held at the end of a round are banked for the garage
   spinDuration: 1.25,
+  bumpDecay: 4.5, // how fast a collision knock-back fades (per second)
+  bumpMin: 5, // minimum knock-back speed on contact (m/s)
+  bumpMax: 16,
   mushroomDuration: 1.4,
   mushroomImpulse: 9,
 });

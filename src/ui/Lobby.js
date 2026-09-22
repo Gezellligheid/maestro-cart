@@ -44,6 +44,7 @@ export class Lobby {
       this.joinInput.value = this.joinInput.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
     });
     $('btn-start').addEventListener('click', () => this.h.onStart());
+    $('btn-ready').addEventListener('click', () => this.h.onReady());
     $('btn-leave').addEventListener('click', () => this.h.onLeave());
     $('btn-copy').addEventListener('click', () => this._copy());
     $('btn-room-garage').addEventListener('click', () => this.h.onGarage());
@@ -99,7 +100,6 @@ export class Lobby {
     this.nameInput.disabled = true;
     $('room-code').textContent = code;
     $('btn-start').classList.toggle('hidden', !isHost);
-    $('wait-host').classList.toggle('hidden', isHost);
   }
 
   setPlayers(players, localSlot) {
@@ -110,7 +110,15 @@ export class Lobby {
         <span class="flex-1 truncate font-bold">${escapeHtml(p.name)}</span>
         ${p.slot === 0 ? '<span class="text-[10px] font-black uppercase tracking-widest text-amber-300">Host</span>' : ''}
         ${p.slot === localSlot ? '<span class="text-[10px] font-black uppercase tracking-widest text-sky-300">You</span>' : ''}
+        <span class="rounded-md px-2 py-0.5 text-[10px] font-black uppercase tracking-widest ${p.ready ? 'bg-emerald-400/90 text-[#062b1a]' : 'bg-white/10 text-white/45'}">${p.ready ? 'Ready' : 'Not ready'}</span>
       </li>`).join('');
+    const me = players.find((p) => p.slot === localSlot);
+    const readyCount = players.filter((p) => p.ready).length;
+    const btn = $('btn-ready');
+    btn.querySelector('span').textContent = me && me.ready ? 'Ready ✓ (click to cancel)' : 'Ready';
+    btn.classList.toggle('btn-primary', !(me && me.ready));
+    btn.classList.toggle('btn-secondary', !!(me && me.ready));
+    $('ready-status').textContent = `${readyCount}/${players.length} ready — the race starts when everyone is ready`;
   }
 
   setStatus(text, isError = false) {
@@ -126,7 +134,7 @@ export class Lobby {
 
 /** End-of-race results overlay. */
 export class Results {
-  constructor({ onAgain, onMenu, onGarage }) {
+  constructor({ onAgain, onMenu, onGarage, onForceStart }) {
     this.root = $('results');
     this.list = $('results-list');
     this.note = $('results-note');
@@ -134,6 +142,7 @@ export class Results {
     this.again.addEventListener('click', onAgain);
     $('btn-menu').addEventListener('click', onMenu);
     $('btn-results-garage').addEventListener('click', onGarage);
+    $('btn-results-start').addEventListener('click', onForceStart);
   }
 
   show(v) {
@@ -146,7 +155,7 @@ export class Results {
   }
 
   /** entries: [{ slot, name, time|null }] in finishing order; localSlot highlights the player. */
-  render(entries, localSlot, { canRestart, note }) {
+  render(entries, localSlot, { canRestart, note, ready = null }) {
     this.list.innerHTML = entries.map((e, i) => {
       const me = e.slot === localSlot;
       return `<li class="flex items-center gap-3 rounded-xl px-3 py-2 ${me ? 'bg-amber-300/20 ring-2 ring-amber-300/60' : 'bg-black/25'}">
@@ -156,8 +165,31 @@ export class Results {
         <span class="font-mono text-sm tabular-nums ${e.time == null ? 'text-white/40' : ''}">${e.time == null ? (e.dnf ? 'DNF' : 'racing…') : formatTime(e.time)}</span>
       </li>`;
     }).join('');
-    this.again.classList.toggle('hidden', !canRestart);
     this.note.textContent = note || '';
+    const label = this.again.querySelector('span');
+    const readyText = $('results-ready');
+    const force = $('btn-results-start');
+    if (ready) {
+      // Multiplayer: everyone readies up; the host can also skip the wait.
+      this.again.classList.remove('hidden');
+      this.again.disabled = !ready.canReady;
+      label.textContent = ready.me ? 'Ready ✓ (click to cancel)' : 'Ready for next race';
+      this.again.classList.toggle('btn-primary', !ready.me);
+      this.again.classList.toggle('btn-secondary', ready.me);
+      readyText.classList.remove('hidden');
+      readyText.textContent = ready.canReady
+        ? `${ready.count}/${ready.total} ready — next race starts when everyone is ready`
+        : 'Ready-up opens when the race is over';
+      force.classList.toggle('hidden', !ready.isHost || !ready.canReady);
+    } else {
+      this.again.disabled = false;
+      label.textContent = 'Next Race · New Track';
+      this.again.classList.add('btn-primary');
+      this.again.classList.remove('btn-secondary');
+      this.again.classList.toggle('hidden', !canRestart);
+      readyText.classList.add('hidden');
+      force.classList.add('hidden');
+    }
   }
 }
 
@@ -175,6 +207,15 @@ export class GarageUI {
     this.earned = $('garage-earned');
     this.tab = 'perf';
     this.allowPerf = true;
+    this.preview = null; // { slot, part } being tried on but not owned yet
+    this.buyBar = $('garage-buybar');
+    $('btn-garage-buy').addEventListener('click', () => {
+      const pv = this.preview;
+      if (pv && this.garage.equip(pv.slot, pv.part)) {
+        this.preview = null;
+        this._changed();
+      }
+    });
 
     for (const t of document.querySelectorAll('.garage-tab')) {
       t.addEventListener('click', () => this.setTab(t.dataset.tab));
@@ -190,7 +231,15 @@ export class GarageUI {
       if (part) {
         const slot = PART_SLOTS.find((s) => s.key === part.dataset.slot);
         const item = slot && slot.list.find((p) => p.id === part.dataset.id);
-        if (item && this.garage.equip(slot.key, item)) this._changed();
+        if (!item) return;
+        if (this.garage.isOwned(slot.key, item.id)) {
+          this.garage.equip(slot.key, item); // owned: equip straight away
+          this.preview = null;
+          this._changed();
+        } else {
+          this.preview = { slot: slot.key, part: item }; // not owned: try it on first
+          this.render();
+        }
         return;
       }
       const sw = e.target.closest('button[data-paint]');
@@ -215,6 +264,7 @@ export class GarageUI {
   }
 
   close() {
+    this.preview = null;
     this.root.classList.add('hidden');
     this.root.classList.remove('flex');
   }
@@ -243,9 +293,31 @@ export class GarageUI {
     this.earned.textContent = text || '';
   }
 
+  /** Look shown on the showroom kart: the equipped look plus any part being previewed. */
+  get displayLook() {
+    const pv = this.preview;
+    return pv ? { ...this.garage.look, [pv.slot]: pv.part.id } : this.garage.look;
+  }
+
+  _renderBuyBar() {
+    const pv = this.tab === 'style' ? this.preview : null;
+    this.buyBar.classList.toggle('hidden', !pv);
+    this.buyBar.classList.toggle('flex', !!pv);
+    if (!pv) return;
+    const g = this.garage;
+    const short = pv.part.price - g.wallet;
+    $('garage-buy-name').textContent = pv.part.name;
+    const btn = $('btn-garage-buy');
+    btn.disabled = short > 0;
+    btn.innerHTML = short > 0
+      ? `Need ${short} more`
+      : `Buy <span class="coin"></span>${pv.part.price}`;
+  }
+
   render() {
     const g = this.garage;
     for (const el of document.querySelectorAll('.wallet-amount')) el.textContent = String(g.wallet);
+    this._renderBuyBar();
     if (this.tab === 'perf') this._renderPerf();
     else this._renderStyle();
   }
@@ -281,12 +353,13 @@ export class GarageUI {
       const chips = slot.list.map((p) => {
         const equipped = g.look[slot.key] === p.id;
         const owned = g.isOwned(slot.key, p.id);
-        const affordable = owned || g.wallet >= p.price;
-        const cls = equipped
-          ? 'bg-sky-500 text-white ring-2 ring-sky-300'
-          : owned ? 'bg-white/10 hover:bg-white/20' : affordable ? 'bg-amber-300/15 text-amber-100 hover:bg-amber-300/25' : 'bg-white/5 text-white/35';
+        const previewing = this.preview && this.preview.slot === slot.key && this.preview.part.id === p.id;
+        const cls = previewing
+          ? 'bg-amber-300/30 text-amber-50 ring-2 ring-amber-300'
+          : equipped ? 'bg-sky-500 text-white ring-2 ring-sky-300'
+          : owned ? 'bg-white/10 hover:bg-white/20' : 'bg-amber-300/10 text-amber-100/80 hover:bg-amber-300/20';
         const price = owned ? '' : `<span class="ml-1 inline-flex items-center gap-1 text-xs"><span class="coin h-3 w-3"></span>${p.price}</span>`;
-        return `<button data-slot="${slot.key}" data-id="${p.id}" class="rounded-lg px-3 py-2 text-sm font-bold transition ${cls}" ${affordable ? '' : 'disabled'}>${p.name}${price}</button>`;
+        return `<button data-slot="${slot.key}" data-id="${p.id}" class="rounded-lg px-3 py-2 text-sm font-bold transition ${cls}">${p.name}${price}</button>`;
       }).join('');
       return `<section><p class="mb-1.5 text-xs font-bold uppercase tracking-widest text-white/50">${slot.label}</p><div class="flex flex-wrap gap-1.5">${chips}</div></section>`;
     });

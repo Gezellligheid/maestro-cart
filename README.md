@@ -24,10 +24,13 @@ public broker handles signalling only; gameplay traffic is direct WebRTC.
   cosmetic parts (bodies, spoilers, wheels, headgear) plus paint/accent colours, previewed in 3D and
   shown to everyone in the room. Everything lasts for that room / solo session only — leaving to the
   menu resets it. CPU karts get upgrades as rounds progress.
+- **Ready-up**: in a room every player marks Ready in the lobby and again between rounds; the
+  race starts when everyone is ready (the host can also skip the wait).
+- **Style parts** are previewed on the showroom kart when clicked and only bought via the Buy button.
 - **Items**: green shell, banana, mushroom and the rare Mega Mushroom (3× size for 10 s: immune to
   items, squashes karts it touches).
 - **Audio**: `sound_effects/` holds the countdown, item-roulette, race-end jingle and three music
-  tracks (one per circuit). Press M to mute.
+  tracks (one per circuit). Settings (gear button or Esc) has master/music/effects volume; M mutes.
 
 ## Architecture
 
@@ -51,4 +54,4 @@ public broker handles signalling only; gameplay traffic is direct WebRTC.
 Netcode model: each player simulates their own kart (instant response) and streams state; the host
 is authoritative for item boxes, coins, projectile spawns, hits, and finish order.
 
-Controls: WASD/arrows drive · Space hop/drift · Shift/E item · R respawn · M mute. Gamepads work too.
+Controls: WASD/arrows drive · Space hop/drift · Shift/E item · R respawn · M mute · Esc settings. Gamepads work too.

@@ -52,6 +52,8 @@ export class Kart {
     this.megaScale = 1;
     this.megaRemote = false;
     this.steerInput = 0; // smoothed steering
+    this.bumpX = 0; this.bumpZ = 0; // knock-back velocity from kart collisions
+    this.bumpCooldown = 0;
 
     // Interpolated render state
     this.x = spawn.x; this.y = KART.radius; this.z = spawn.z;
@@ -140,8 +142,10 @@ export class Kart {
     this.grounded = gd >= 0 && v.y < 3;
 
     let sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
-    let fwd = v.x * sin + v.z * cos;
-    let lat = v.x * -cos + v.z * sin;
+    // Separate out the knock-back component so the arcade model works on the kart's own motion.
+    const bvx = v.x - this.bumpX, bvz = v.z - this.bumpZ;
+    let fwd = bvx * sin + bvz * cos;
+    let lat = bvx * -cos + bvz * sin;
     let vy = v.y;
 
     this.offroad = Math.abs(this.trackLateral) > this.track.roadLimit;
@@ -256,9 +260,12 @@ export class Kart {
 
     sin = Math.sin(this.yaw); cos = Math.cos(this.yaw);
     const vel = this._vel;
-    vel.x = sin * fwd + -cos * lat;
+    const decay = Math.exp(-C.bumpDecay * dt);
+    this.bumpX *= decay; this.bumpZ *= decay;
+    if (this.bumpCooldown > 0) this.bumpCooldown -= dt;
+    vel.x = sin * fwd + -cos * lat + this.bumpX;
     vel.y = vy;
-    vel.z = cos * fwd + sin * lat;
+    vel.z = cos * fwd + sin * lat + this.bumpZ;
     this.body.setLinvel(vel, true);
 
     this.speed = fwd;
@@ -266,7 +273,7 @@ export class Kart {
 
     // Visual helpers
     this.steerVisual += (steer - this.steerVisual) * Math.min(1, dt * 12);
-    const driftTarget = this.drifting ? -this.driftDir * 0.38 : 0;
+    const driftTarget = this.drifting ? -this.driftDir * 0.26 : 0;
     this.driftVisual += (driftTarget - this.driftVisual) * Math.min(1, dt * 8);
     this.wheelSpin += fwd * dt / 0.3;
 
@@ -321,6 +328,14 @@ export class Kart {
     return true;
   }
 
+  /** Knock the kart along (nx, nz) at `speed` m/s (from a kart-to-kart collision). */
+  applyBump(nx, nz, speed) {
+    this.bumpX += nx * speed;
+    this.bumpZ += nz * speed;
+    this.bumpCooldown = 0.2;
+    if (this.drifting && speed > 9) this._cancelDrift();
+  }
+
   activateMega() {
     if (this.megaTimer > 0) return false;
     this.megaTimer = MEGA.duration;
@@ -362,6 +377,7 @@ export class Kart {
     this.x = this.prevX = p.x; this.y = this.prevY = p.y; this.z = this.prevZ = p.z;
     this._cancelDrift();
     this.boostTimer = 0;
+    this.bumpX = 0; this.bumpZ = 0;
   }
 
   /** Remote karts: move the kinematic body to the interpolated network state. */
@@ -393,7 +409,7 @@ export class Kart {
   /** Advance remote-only visual state each frame. */
   updateRemoteVisuals(dt) {
     this._updateMegaScale(dt, this.megaRemote);
-    const driftTarget = this.drifting ? -this.driftDir * 0.38 : 0;
+    const driftTarget = this.drifting ? -this.driftDir * 0.26 : 0;
     this.driftVisual += (driftTarget - this.driftVisual) * Math.min(1, dt * 8);
     this.wheelSpin += this.speed * dt / 0.3;
     if (this.spinTimer > 0) this.spinAngle += dt * TAU * 1.6;

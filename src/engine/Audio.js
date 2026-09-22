@@ -5,7 +5,8 @@ import music1Url from '../../sound_effects/track1_music.mp3';
 import music2Url from '../../sound_effects/track2_music.mp3';
 import music3Url from '../../sound_effects/track3_music.mp3';
 
-const MUTE_KEY = 'mkbros:muted';
+const SETTINGS_KEY = 'mkbros:audio';
+const MUSIC_BASE = 0.45; // music sits under the effects at 100%
 const MUSIC = [music1Url, music2Url, music3Url];
 const SFX = { countdown: countdownUrl, roll: rollUrl, raceEnd: raceEndUrl };
 // Measured cue points inside the supplied clips (seconds).
@@ -23,8 +24,12 @@ export class Audio {
   constructor() {
     this.ctx = null;
     this.buffers = new Map();
-    this.muted = false;
-    try { this.muted = localStorage.getItem(MUTE_KEY) === '1'; } catch { /* storage unavailable */ }
+    // Device preferences (not game progress), so they're remembered in localStorage.
+    this.settings = { master: 0.8, music: 0.7, sfx: 0.9, muted: false };
+    try {
+      const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null');
+      if (saved) for (const k of Object.keys(this.settings)) if (typeof saved[k] === typeof this.settings[k]) this.settings[k] = saved[k];
+    } catch { /* storage unavailable */ }
     this.musicEl = null;
     this.musicIndex = -1;
     this._unlock = () => this.init();
@@ -41,19 +46,19 @@ export class Audio {
     if (!Ctx) return;
     this.ctx = new Ctx();
     this.master = this.ctx.createGain();
-    this.master.gain.value = this.muted ? 0 : 1;
     this.master.connect(this.ctx.destination);
     this.sfxGain = this.ctx.createGain();
-    this.sfxGain.gain.value = 0.8;
     this.sfxGain.connect(this.master);
+    // musicFade handles fade in/out; musicGain holds the user's music volume.
+    this.musicFade = this.ctx.createGain();
     this.musicGain = this.ctx.createGain();
-    this.musicGain.gain.value = 0.45;
-    this.musicGain.connect(this.master);
+    this.musicFade.connect(this.musicGain).connect(this.master);
+    this._applyVolumes();
 
     this.musicEl = document.createElement('audio');
     this.musicEl.loop = true;
     this.musicEl.preload = 'auto';
-    this.ctx.createMediaElementSource(this.musicEl).connect(this.musicGain);
+    this.ctx.createMediaElementSource(this.musicEl).connect(this.musicFade);
 
     for (const [name, url] of Object.entries(SFX)) this._load(name, url);
     window.removeEventListener('pointerdown', this._unlock);
@@ -116,17 +121,17 @@ export class Audio {
       this.musicIndex = i;
     }
     this.musicEl.currentTime = 0;
-    this.musicGain.gain.cancelScheduledValues(this.ctx.currentTime);
-    this.musicGain.gain.setValueAtTime(0.45, this.ctx.currentTime);
+    this.musicFade.gain.cancelScheduledValues(this.ctx.currentTime);
+    this.musicFade.gain.setValueAtTime(1, this.ctx.currentTime);
     this.musicEl.play().catch(() => {});
   }
 
   stopMusic(fade = 1) {
     if (!this.ctx || !this.musicEl || this.musicEl.paused) return;
     const t = this.ctx.currentTime;
-    this.musicGain.gain.cancelScheduledValues(t);
-    this.musicGain.gain.setValueAtTime(this.musicGain.gain.value, t);
-    this.musicGain.gain.linearRampToValueAtTime(0, t + fade);
+    this.musicFade.gain.cancelScheduledValues(t);
+    this.musicFade.gain.setValueAtTime(this.musicFade.gain.value, t);
+    this.musicFade.gain.linearRampToValueAtTime(0, t + fade);
     clearTimeout(this._musicStop);
     this._musicStop = setTimeout(() => this.musicEl.pause(), fade * 1000 + 50);
   }
@@ -144,6 +149,7 @@ export class Audio {
       hit: { type: 'triangle', f0: 520, f1: 90, dur: 0.45, vol: 0.25 },
       item: { type: 'square', f0: 330, f1: 660, dur: 0.1, vol: 0.1 },
       mega: { type: 'sawtooth', f0: 110, f1: 440, dur: 0.9, vol: 0.18 },
+      bump: { type: 'triangle', f0: 160, f1: 60, dur: 0.18, vol: 0.3 },
     };
     const p = presets[kind] || presets.item;
     osc.type = p.type;
@@ -155,10 +161,28 @@ export class Audio {
     osc.stop(t + p.dur + 0.02);
   }
 
+  get muted() {
+    return this.settings.muted;
+  }
+
+  /** kind: 'master' | 'music' | 'sfx' (0..1) or 'muted' (boolean). */
+  set(kind, value) {
+    this.settings[kind] = value;
+    this._applyVolumes();
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(this.settings)); } catch { /* storage unavailable */ }
+  }
+
   toggleMute() {
-    this.muted = !this.muted;
-    try { localStorage.setItem(MUTE_KEY, this.muted ? '1' : '0'); } catch { /* storage unavailable */ }
-    if (this.master) this.master.gain.value = this.muted ? 0 : 1;
-    return this.muted;
+    this.set('muted', !this.settings.muted);
+    return this.settings.muted;
+  }
+
+  _applyVolumes() {
+    if (!this.ctx) return;
+    const s = this.settings;
+    // Squared curve feels more natural on a linear slider.
+    this.master.gain.value = s.muted ? 0 : s.master * s.master;
+    this.musicGain.gain.value = MUSIC_BASE * s.music * s.music;
+    this.sfxGain.gain.value = s.sfx * s.sfx;
   }
 }

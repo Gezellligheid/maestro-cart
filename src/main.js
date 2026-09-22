@@ -1,6 +1,6 @@
 import './style.css';
 import * as THREE from 'three';
-import { createIcons, Flag, Users, Gamepad2, LogIn, Trophy, RotateCcw, Link, LoaderCircle, House, Wrench, Check } from 'lucide';
+import { createIcons, Flag, Users, Gamepad2, LogIn, Trophy, RotateCcw, Link, LoaderCircle, House, Wrench, Check, Settings as SettingsIcon } from 'lucide';
 
 import { Renderer } from './engine/Renderer.js';
 import { Physics } from './engine/Physics.js';
@@ -20,6 +20,7 @@ import { Interpolator } from './network/Interpolator.js';
 import { PacketWriter, KartRecord, readPacket, PKT_CLIENT_STATE, PKT_SNAPSHOT } from './network/Protocol.js';
 import { HUD } from './ui/HUD.js';
 import { Lobby, Results, GarageUI } from './ui/Lobby.js';
+import { Settings } from './ui/Settings.js';
 import {
   MAX_KARTS, TOTAL_LAPS, SOLO_BOTS, NET_TICK_HZ, KART, CPU_NAMES,
 } from './game/constants.js';
@@ -44,9 +45,15 @@ class Game {
     this.net = new NetworkManager();
     this.audio = new Audio();
     this._sfxState = { rolling: false, coins: 0, boost: false, mega: false, countdown: false };
+    this.settings = new Settings(this.audio);
     window.addEventListener('keydown', (e) => {
-      if (e.code !== 'KeyM' || e.target.tagName === 'INPUT') return;
-      this.toast(this.audio.toggleMute() ? 'Sound off (M)' : 'Sound on (M)');
+      if (e.target.tagName === 'INPUT') return;
+      if (e.code === 'KeyM') {
+        this.toast(this.audio.toggleMute() ? 'Sound off (M)' : 'Sound on (M)');
+        if (this.settings.visible) this.settings.refresh();
+      } else if (e.code === 'Escape') {
+        this.settings.toggle();
+      }
     });
 
     this.mode = 'menu'; // menu | solo | host | client
@@ -87,11 +94,13 @@ class Game {
       onHost: (name) => this.hostRoom(name),
       onJoin: (code, name) => this.joinRoom(code, name),
       onStart: () => this.startHostRace(),
+      onReady: () => this.toggleReady(),
       onLeave: () => this.toMenu(),
       onGarage: () => this.openGarage(),
     });
     this.results = new Results({
       onAgain: () => this.raceAgain(),
+      onForceStart: () => this.startHostRace(),
       onMenu: () => this.toMenu(),
       onGarage: () => this.openGarage(),
     });
@@ -136,6 +145,8 @@ class Game {
     const net = this.net;
     net.on('roster', (players) => {
       this.lobby.setPlayers(players, net.localSlot);
+      if (this.results.visible) this._refreshResults();
+      this._maybeAutoStart();
       if (this.inRace) {
         // Drop karts whose drivers left mid-race.
         const present = new Set(players.map((p) => p.slot));
@@ -211,6 +222,10 @@ class Game {
   }
 
   raceAgain() {
+    if (this.mode === 'host' || this.mode === 'client') {
+      this.toggleReady();
+      return;
+    }
     if (this.mode === 'solo') this.startSolo(this.lobby.name);
     else if (this.mode === 'host') this.startHostRace();
   }
@@ -228,6 +243,9 @@ class Game {
     if (this.mode !== 'host') return;
     const players = this.net.players.map((p) => ({ slot: p.slot, name: p.name, look: p.slot === 0 ? this.garage.look : p.look }));
     this.net.acceptingPlayers = false;
+    clearTimeout(this._autoStart);
+    this._autoStart = null;
+    this.net.resetReady();
     const seed = randomSeed();
     this.net.broadcast({ t: 'start', players, countdown: COUNTDOWN_MS, seed });
     this._setupRace(players.map((p) => ({ ...p, control: p.slot === 0 ? 'local' : 'remote' })), COUNTDOWN_MS, seed);
@@ -334,6 +352,7 @@ class Game {
 
   _fixedPre(dt) {
     const input = this.input.state;
+    this._kartBumps();
     for (let i = 0; i < this.karts.length; i++) {
       const k = this.karts[i];
       if (!k.simulated) continue;
@@ -344,6 +363,40 @@ class Game {
     }
     this.input.consumeEdges();
     this.items.fixedUpdate(dt, this.karts);
+  }
+
+  /**
+   * Arcade kart-vs-kart collisions. Rapier resolves the overlap, but the grip model would erase
+   * the sideways push within a few frames, so each locally simulated kart also gets a decaying
+   * knock-back impulse. Each peer handles its own kart, so both sides of a bump feel it.
+   */
+  _kartBumps() {
+    const karts = this.karts;
+    for (let i = 0; i < karts.length; i++) {
+      const k = karts[i];
+      if (!k.simulated || k.bumpCooldown > 0) continue;
+      for (let j = 0; j < karts.length; j++) {
+        const o = karts[j];
+        if (o === k) continue;
+        const dx = k.x - o.x, dz = k.z - o.z;
+        const reach = k.radius + o.radius + 0.15;
+        const d2 = dx * dx + dz * dz;
+        if (d2 > reach * reach || Math.abs(k.y - o.y) > reach) continue;
+        const d = Math.sqrt(d2) || 0.001;
+        const nx = dx / d, nz = dz / d;
+        // Closing speed along the contact normal (positive = moving into each other).
+        const closing = -((k.vx - o.vx) * nx + (k.vz - o.vz) * nz);
+        const massRatio = (o.megaScale * o.megaScale) / (k.megaScale * k.megaScale);
+        const speed = Math.min(KART.bumpMax, (KART.bumpMin + Math.max(0, closing) * 0.55) * Math.sqrt(massRatio));
+        k.applyBump(nx, nz, speed);
+        if (k === this.localKart) {
+          this.audio.blip('bump');
+          this.renderer.addShake(Math.min(0.5, speed / 30));
+        }
+        this.particles.burst((k.x + o.x) / 2, Math.min(k.y, o.y) + 0.4, (k.z + o.z) / 2, 6, 5, 0.35, 0.25, 0xffffff, -10);
+        break;
+      }
+    }
   }
 
   _fixedPost() {
@@ -444,10 +497,51 @@ class Game {
     let note = '';
     if (this.mode === 'client') note = done ? 'Upgrade your kart while the host starts the next race…' : 'Waiting for other racers to finish…';
     else if (!done) note = 'Other racers are still on track…';
+    let ready = null;
+    if (this.mode === 'host' || this.mode === 'client') {
+      const players = this.net.players;
+      const me = players.find((p) => p.slot === this.net.localSlot);
+      ready = {
+        me: !!(me && me.ready),
+        count: players.filter((p) => p.ready).length,
+        total: players.length,
+        canReady: done,
+        isHost: this.mode === 'host',
+      };
+      if (done) note = '';
+    }
     this.results.render(entries, this.localKart ? this.localKart.slot : -1, {
       canRestart: this.mode === 'solo' || this.mode === 'host',
       note,
+      ready,
     });
+  }
+
+  // =================================================================== ready-up
+
+  toggleReady() {
+    if (this.mode !== 'host' && this.mode !== 'client') return;
+    if (this.inRace && this.race.state !== 'done') return; // only between races
+    const me = this.net.players.find((p) => p.slot === this.net.localSlot);
+    this.audio.blip('item');
+    this.net.setReady(!(me && me.ready));
+  }
+
+  /** Host: start the next race shortly after everyone has readied up. */
+  _maybeAutoStart() {
+    if (this.mode !== 'host') return;
+    const between = !this.inRace || this.race.state === 'done';
+    if (between && this.net.allReady) {
+      if (!this._autoStart) {
+        this._autoStart = setTimeout(() => {
+          this._autoStart = null;
+          if (this.mode === 'host' && this.net.allReady) this.startHostRace();
+        }, 900);
+      }
+    } else if (this._autoStart) {
+      clearTimeout(this._autoStart);
+      this._autoStart = null;
+    }
   }
 
   // =================================================================== networking
@@ -628,7 +722,7 @@ class Game {
 
   _updateShowroom(time) {
     const p = this.previewKart;
-    p.look = this.garage.look;
+    p.look = this.garageUI.displayLook;
     p.yaw = p.prevYaw = Math.sin(time * 0.25) * 0.6 + 0.5;
     p.steerVisual = Math.sin(time * 0.9) * 0.6;
     p.wheelSpin = time * 2;
@@ -728,7 +822,7 @@ class Game {
 }
 
 async function boot() {
-  createIcons({ icons: { Flag, Users, Gamepad2, LogIn, Trophy, RotateCcw, Link, LoaderCircle, House, Wrench, Check } });
+  createIcons({ icons: { Flag, Users, Gamepad2, LogIn, Trophy, RotateCcw, Link, LoaderCircle, House, Wrench, Check, Settings: SettingsIcon } });
   const loading = document.getElementById('loading');
   try {
     const physics = await Physics.create();
