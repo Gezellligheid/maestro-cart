@@ -245,11 +245,28 @@ class Game {
 
   // =================================================================== race setup
 
+  /**
+   * A seed whose theme and layout family differ from the previous round's, and never a
+   * figure-8 within three rounds of the last one (they're special, keep them rare).
+   */
+  _nextSeed() {
+    const recent = this._recentStyles || (this._recentStyles = []);
+    const ok = (info) => info.style !== recent[recent.length - 1] && info.theme !== this._lastTheme
+      && !(info.style === 'figure8' && recent.includes('figure8'));
+    let seed = randomSeed();
+    for (let tries = 0; tries < 80 && !ok(Track.peek(seed)); tries++) seed = randomSeed();
+    const info = Track.peek(seed);
+    recent.push(info.style);
+    if (recent.length > 3) recent.shift();
+    this._lastTheme = info.theme;
+    return seed;
+  }
+
   startSolo(name) {
     this.mode = 'solo';
     const roster = [{ slot: 0, name, control: 'local', look: this.garage.look }];
     for (let i = 1; i <= SOLO_BOTS; i++) roster.push({ slot: i, name: CPU_NAMES[i - 1], control: 'bot', look: randomLook() });
-    this._setupRace(roster, COUNTDOWN_MS, randomSeed());
+    this._setupRace(roster, COUNTDOWN_MS, this._nextSeed());
   }
 
   startHostRace() {
@@ -267,7 +284,7 @@ class Game {
     clearTimeout(this._autoStart);
     this._autoStart = null;
     this.net.resetReady();
-    const seed = randomSeed();
+    const seed = this._nextSeed();
     this.net.broadcast({ t: 'start', players, countdown: COUNTDOWN_MS, seed });
     this._setupRace(players.map((p) => ({ ...p, control: p.cpu ? 'bot' : p.slot === 0 ? 'local' : 'remote' })), COUNTDOWN_MS, seed);
   }

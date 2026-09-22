@@ -1,13 +1,20 @@
 import * as THREE from 'three';
 import { RibbonBuilder, box, cylinder, merge, mulberry32, paint } from '../engine/geometry.js';
+import { THEMES, rainbowColor, buildScenery, buildGrandstand, buildTireStacks } from './TrackDecor.js';
 
 const S = 720; // centre-line samples
-const HALF_WIDTH = 9;
+const BASE_WIDTH = 9; // road half-width where width is pinned (start, bridges, tunnels)
+const WIDTH_VAR = 1.6; // +/- half-width variation elsewhere
+const MAX_HALF_WIDTH = BASE_WIDTH + WIDTH_VAR;
 const CURB_WIDTH = 1.6;
-const BARRIER_OFFSET = HALF_WIDTH + CURB_WIDTH + 1.0;
+const BARRIER_GAP = 1.0; // curb edge → barrier
+const MAX_BARRIER = MAX_HALF_WIDTH + CURB_WIDTH + BARRIER_GAP;
+const EDGE_STD = BASE_WIDTH + CURB_WIDTH + BARRIER_GAP + 0.7; // deck edge where width is pinned
 const BARRIER_STEP = 3; // samples per barrier segment
 const CHECKPOINTS = 12;
 const GROUND_SIZE = 900;
+const OVERPASS_RISE = 7.5;
+const BRIDGE_RISE = 5.5;
 
 // Hand-made fallback layout, used if the generator can't find a valid circuit.
 const CLASSIC_LAYOUT = [
@@ -15,60 +22,65 @@ const CLASSIC_LAYOUT = [
   [55, 125], [5, 135], [-45, 112], [-60, 65], [-105, 45], [-130, -5], [-115, -70], [-65, -112],
 ].map(([x, z]) => [x * 1.35, z * 1.35]);
 
-const THEMES = [
-  {
-    id: 'meadow', ground: 0x6fbf4a, leaves: [0x2d8a3e, 0x3fa34d, 0x1f6f35, 0x5bb450],
-    mountains: [0x7d9c6b, 0x8fae7a, 0x6d8a60, 0x9fb7a0],
-    words: ['Clover', 'Sunny', 'Daisy', 'Meadow', 'Willow', 'Honey'],
-  },
-  {
-    id: 'desert', ground: 0xe0bd72, leaves: [0x5f8f3a, 0x7aa04a, 0x6b8e23],
-    mountains: [0xc9895a, 0xd9a066, 0xb87447, 0xe0b07a],
-    words: ['Dusty', 'Cactus', 'Mirage', 'Canyon', 'Sunbaked', 'Mesa'],
-  },
-  {
-    id: 'snow', ground: 0xe9f1f7, leaves: [0x1f5f3a, 0x2c6e46, 0x245c3c],
-    mountains: [0xdfe8ef, 0xc5d3dd, 0xaebfcc, 0xf2f6f9],
-    words: ['Frosty', 'Glacier', 'Blizzard', 'Snowcap', 'Polar', 'Icicle'],
-  },
-  {
-    id: 'autumn', ground: 0x9cbf4f, leaves: [0xe07a2b, 0xd9480f, 0xf2b134, 0xb5361c],
-    mountains: [0x9c7b5b, 0xae8c63, 0x8a6b4e, 0xbf9d72],
-    words: ['Amber', 'Harvest', 'Pumpkin', 'Rusty', 'Maple', 'Cider'],
-  },
-];
-const TRACK_NOUNS = ['Circuit', 'Loop', 'Raceway', 'Speedway', 'Ring', 'Grand Prix', 'Park'];
-
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+const circ = (i) => ((i % S) + S) % S;
+const circDist = (a, b) => {
+  const d = Math.abs(circ(a) - circ(b));
+  return Math.min(d, S - d);
+};
+const smooth01 = (t) => {
+  const x = Math.max(0, Math.min(1, t));
+  return x * x * (3 - 2 * x);
+};
 const TUNNEL_HILL = { width: 26, height: 13 }; // half-width at ground, peak height
 
+/** Layout family from one roll: grid circuits, organic loops, switchbacks, figure-8s. */
+const styleFor = (r) => (r < 0.36 ? 'circuit' : r < 0.72 ? 'flowing' : r < 0.93 ? 'switchback' : 'figure8');
+
+/** Box blur on a circular array (used to soften masks). */
+function blurCircular(arr, radius, passes) {
+  const tmp = new Float32Array(arr.length);
+  const n = arr.length;
+  for (let p = 0; p < passes; p++) {
+    for (let i = 0; i < n; i++) {
+      let s = 0;
+      for (let o = -radius; o <= radius; o++) s += arr[(i + o + n) % n];
+      tmp[i] = s / (radius * 2 + 1);
+    }
+    arr.set(tmp);
+  }
+}
+
 /**
- * Procedurally generated closed spline circuit: road ribbon, curbs, barriers (instanced +
- * Rapier colliders), start gantry, checkpoint arches and scenery. The layout is fully
- * determined by a seed, so the host only has to send one number for every peer to build
- * the identical track. Also answers progress queries.
+ * Procedurally generated circuit. The layout, terrain, width, features (bridges, overpasses,
+ * tunnels, jumps, boost pads, hazards) and scenery all come from one seed, so the host only
+ * sends a number and every peer builds the identical track. Also answers progress queries.
  */
 export class Track {
   constructor(renderer, physics, seed = 1) {
     this.renderer = renderer;
     this.physics = physics;
     this.samples = S;
-    this.halfWidth = HALF_WIDTH;
-    this.roadLimit = HALF_WIDTH + CURB_WIDTH; // beyond this we're off-road
+    this.halfWidth = BASE_WIDTH;
 
     this.px = new Float32Array(S);
     this.pz = new Float32Array(S);
     this.tx = new Float32Array(S);
     this.tz = new Float32Array(S);
     this.yaw = new Float32Array(S);
+    this.width = new Float32Array(S).fill(BASE_WIDTH); // road half-width per sample
+    this.height = new Float32Array(S); // final road elevation
+    this.baseHeight = new Float32Array(S); // rolling terrain under the road (no bridges/jumps)
     this.checkpointIdx = new Int32Array(CHECKPOINTS);
     for (let k = 0; k < CHECKPOINTS; k++) this.checkpointIdx[k] = Math.round((k * S) / CHECKPOINTS);
     this.checkpointCount = CHECKPOINTS;
     this.lastLateral = 0;
-    this.height = new Float32Array(S); // road elevation per sample (bridges)
     this.bridges = [];
     this.tunnels = [];
-    this.ice = [];
+    this.jumps = [];
+    this.pads = [];
+    this.hazards = [];
+    this.crossings = [];
 
     this.group = null;
     this.wallColliders = [];
@@ -76,30 +88,45 @@ export class Track {
     this.generate(seed);
   }
 
+  // ================================================================== generation
+
   /** Tear down the current circuit and build a new one from `seed`. */
   generate(seed) {
     this.seed = seed >>> 0;
     const rand = mulberry32(this.seed);
     this.theme = THEMES[Math.floor(rand() * THEMES.length)];
-    this.name = `${this.theme.words[Math.floor(rand() * this.theme.words.length)]} ${TRACK_NOUNS[Math.floor(rand() * TRACK_NOUNS.length)]}`;
+    const t = this.theme;
+    this.name = `${t.words[Math.floor(rand() * t.words.length)]} ${t.nouns[Math.floor(rand() * t.nouns.length)]}`;
 
+    // Layout families, loosely modelled on classic kart tracks.
+    this.style = styleFor(rand());
     let ok = false;
-    // Two layout families: structured grid circuits (most rounds) and flowing loops.
-    this.style = rand() < 0.8 ? 'circuit' : 'flowing';
-    for (let attempt = 0; attempt < 120 && !ok; attempt++) {
-      const layout = this.style === 'circuit' ? this._gridLayout(rand) : this._randomLayout(rand);
+    for (let attempt = 0; attempt < 160 && !ok; attempt++) {
+      const style = attempt < 120 ? this.style : 'circuit';
+      const layout = style === 'circuit' ? this._gridLayout(rand)
+        : style === 'figure8' ? this._figure8Layout(rand)
+          : style === 'switchback' ? this._switchbackLayout(rand)
+            : this._randomLayout(rand);
       if (!layout) continue;
-      this._computeCenterLine(layout);
-      ok = this._isValid();
+      this._computeCenterLine(this._wiggle(layout, rand));
+      ok = this._isValid(rand);
+      if (ok) this.style = style;
     }
-    if (!ok) this._computeCenterLine(CLASSIC_LAYOUT);
+    if (!ok) {
+      this._computeCenterLine(CLASSIC_LAYOUT);
+      this.crossings = [];
+      this.style = 'classic';
+    }
     this._planFeatures(rand);
 
     this._dispose();
     this.group = new THREE.Group();
     this.renderer.scene.add(this.group);
-    this._buildGround();
+    this.renderer.setAtmosphere(t.sky);
+    this._prepareTerrain(rand);
+    if (!t.space) this._buildGround();
     this._buildRoad();
+    this._buildRoadCollider();
     this._buildBarriers();
     this._buildGantry();
     this._buildArches();
@@ -108,6 +135,17 @@ export class Track {
     this._computeMinimap();
     this.itemBoxSpots = this._itemBoxSpots();
     this.coinSpots = this._coinSpots();
+  }
+
+  /**
+   * Cheaply predict a seed's theme and layout family (mirrors the first rolls of generate()),
+   * so the host can pick seeds that don't repeat the previous round.
+   */
+  static peek(seed) {
+    const rand = mulberry32(seed >>> 0);
+    const theme = THEMES[Math.floor(rand() * THEMES.length)];
+    rand(); rand(); // name rolls
+    return { theme: theme.id, style: styleFor(rand()) };
   }
 
   _dispose() {
@@ -122,10 +160,11 @@ export class Track {
     this.group = null;
   }
 
+  // ------------------------------------------------------------------ layouts
+
   /**
    * "Circuit" layout: grow a random polyomino on a coarse grid, trace its outline and round
-   * the corners. This produces real straights, 90° corners, U-shaped hairpins and notches
-   * (L, U, T, S shapes …) instead of blobby loops. Returns null if the shape is unusable.
+   * the corners. This produces real straights, 90° corners, U-shaped hairpins and notches.
    */
   _gridLayout(rand) {
     const cols = 3 + Math.floor(rand() * 3); // 3..5
@@ -133,7 +172,6 @@ export class Track {
     const cell = 58 + rand() * 24;
     const key = (x, y) => x + ',' + y;
 
-    // Grow a connected set of cells.
     const target = Math.max(3, Math.round(cols * rows * (0.45 + rand() * 0.35)));
     const cells = new Set([key(Math.floor(rand() * cols), Math.floor(rand() * rows))]);
     for (let guard = 0; cells.size < target && guard < 400; guard++) {
@@ -146,12 +184,11 @@ export class Track {
     }
     const has = (x, y) => cells.has(key(x, y));
 
-    // Boundary edges, oriented so the shape is on the left (counter-clockwise walk).
     const next = new Map();
     let edges = 0;
     const addEdge = (ax, ay, bx, by) => {
       const k = key(ax, ay);
-      if (next.has(k)) next.set(k, null); // vertex used twice = pinch point → reject later
+      if (next.has(k)) next.set(k, null);
       else next.set(k, [bx, by]);
       edges++;
     };
@@ -164,7 +201,6 @@ export class Track {
     }
     for (const v of next.values()) if (v === null) return null;
 
-    // Walk the single loop; a hole or disjoint outline shows up as a short walk.
     const start = next.keys().next().value.split(',').map(Number);
     const loop = [start];
     let cur = start;
@@ -177,25 +213,28 @@ export class Track {
     }
     if (loop.length !== edges) return null;
 
-    // Keep only the corners.
     const corners = [];
     const n = loop.length;
     for (let i = 0; i < n; i++) {
       const p = loop[(i - 1 + n) % n], c = loop[i], q = loop[(i + 1) % n];
       if ((c[0] - p[0]) * (q[1] - c[1]) - (c[1] - p[1]) * (q[0] - c[0]) !== 0) corners.push(c);
     }
-    if (corners.length < 6) return null; // plain rectangles are boring: need at least one notch
+    if (corners.length < 6) return null;
 
-    // World space, centred, randomly rotated.
     const rot = rand() * Math.PI * 2;
     const cr = Math.cos(rot), sr = Math.sin(rot);
     const world = corners.map(([x, y]) => {
       const wx = (x - cols / 2) * cell, wz = (y - rows / 2) * cell;
       return [wx * cr - wz * sr, wx * sr + wz * cr];
     });
+    return this._roundCorners(world, rand);
+  }
 
-    // Round each corner with a 3-point arc; fill long straights with collinear points so the
-    // spline stays straight, and occasionally drop in a chicane.
+  /**
+   * Round a polygon's corners with 3-point arcs and fill straights with collinear points.
+   * Returns points starting in the middle of the longest straight (start/finish).
+   */
+  _roundCorners(world, rand, rMin = 18, rVar = 10) {
     const pts = [];
     let bestStraight = -1, bestLen = 0;
     const m = world.length;
@@ -203,8 +242,7 @@ export class Track {
       const a = world[i], b = world[(i + 1) % m];
       return Math.hypot(b[0] - a[0], b[1] - a[1]);
     };
-    // Corner radii first, so straights know exactly where the next corner begins.
-    const radii = world.map((_, i) => Math.min(segLen((i - 1 + m) % m) / 2 - 2, segLen(i) / 2 - 2, 18 + rand() * 10));
+    const radii = world.map((_, i) => Math.min(segLen((i - 1 + m) % m) / 2 - 2, segLen(i) / 2 - 2, rMin + rand() * rVar));
     for (let i = 0; i < m; i++) {
       const p = world[(i - 1 + m) % m], c = world[i], q = world[(i + 1) % m];
       const inLen = Math.hypot(c[0] - p[0], c[1] - p[1]);
@@ -215,42 +253,98 @@ export class Track {
       pts.push([c[0] - din[0] * r, c[1] - din[1] * r]);
       pts.push([c[0] + (dout[0] - din[0]) * r * 0.293, c[1] + (dout[1] - din[1]) * r * 0.293]);
       pts.push([c[0] + dout[0] * r, c[1] + dout[1] * r]);
-
-      // Straight from this corner's exit to the next corner's entry.
       const sx = c[0] + dout[0] * r, sz = c[1] + dout[1] * r;
-      const rNext = radii[(i + 1) % m];
-      const len = outLen - r - rNext;
+      const len = outLen - r - radii[(i + 1) % m];
       const steps = Math.floor(len / 35);
-      const chicane = len > 110 && rand() < 0.35;
-      const side = [-dout[1], dout[0]];
       for (let k = 1; k <= steps; k++) {
         const t = (k / (steps + 1)) * len;
-        let off = 0;
-        if (chicane) {
-          const u = k / (steps + 1);
-          if (u > 0.3 && u < 0.7) off = Math.sin(((u - 0.3) / 0.4) * Math.PI * 2) * 7;
-        }
-        pts.push([sx + dout[0] * t + side[0] * off, sz + dout[1] * t + side[1] * off]);
-        if (!chicane && k === Math.ceil(steps / 2) && len > bestLen) {
+        pts.push([sx + dout[0] * t, sz + dout[1] * t]);
+        if (k === Math.ceil(steps / 2) && len > bestLen) {
           bestLen = len;
           bestStraight = pts.length - 1;
         }
       }
     }
-    // Start/finish in the middle of the longest clean straight.
     if (bestStraight > 0) return pts.slice(bestStraight).concat(pts.slice(0, bestStraight));
     return pts;
   }
 
-  /** Random star-shaped loop: points at increasing angles with noisy, smoothed radii. */
+  /** Figure-8 (lemniscate) with uneven lobes; the crossing becomes an overpass. */
+  _figure8Layout(rand) {
+    const A = 150 + rand() * 70;
+    const B = 80 + rand() * 45;
+    const lobeL = 0.7 + rand() * 0.45; // left lobe scale
+    const n = 18;
+    const pts = [];
+    for (let k = 0; k < n; k++) {
+      const t = (k / n) * Math.PI * 2 + 0.28 * Math.PI; // start on a leg, not at the crossing
+      let x = A * Math.sin(t);
+      let z = B * Math.sin(t) * Math.cos(t) * 2;
+      if (x < 0) { x *= lobeL; z *= lobeL; }
+      // Bumpy lobes, but keep the crossing region clean.
+      const far = Math.min(1, Math.abs(Math.sin(t)) * 1.6);
+      const bump = 1 + (rand() - 0.5) * 0.22 * far;
+      pts.push([x * bump, z * bump]);
+    }
+    const rot = rand() * Math.PI * 2;
+    const cr = Math.cos(rot), sr = Math.sin(rot);
+    return pts.map(([x, z]) => [x * cr - z * sr, x * sr + z * cr]);
+  }
+
+  /**
+   * Mountain-pass switchbacks: three zig-zag legs joined by semicircular hairpins, then a wide
+   * sweeping return leg back to the start (think of the hairpin climbs on classic kart tracks).
+   */
+  _switchbackLayout(rand) {
+    const legs = 3;
+    const r = 28 + rand() * 6; // hairpin radius
+    const spacing = r * 2;
+    const L = 110 + rand() * 70;
+    const R2 = 82 + rand() * 20; // return-leg clearance
+    const pts = [];
+    for (let k = 0; k < legs; k++) {
+      const z = k * spacing;
+      const dir = k % 2 === 0 ? 1 : -1;
+      const x0 = dir > 0 ? 0 : L, x1 = dir > 0 ? L : 0;
+      const jog = (rand() - 0.5) * 12;
+      pts.push([x0 + dir * L * 0.2, z]);
+      pts.push([x0 + dir * L * 0.5, z + jog]);
+      pts.push([x0 + dir * L * 0.8, z]);
+      pts.push([x1, z]);
+      if (k < legs - 1) {
+        for (const ang of [Math.PI / 4, Math.PI / 2, (3 * Math.PI) / 4]) {
+          pts.push([x1 + dir * r * Math.sin(ang), z + r - r * Math.cos(ang)]);
+        }
+        pts.push([x1, z + spacing]);
+      }
+    }
+    // After three legs we're at (L, top) heading +x: sweep round the right and bottom.
+    const top = (legs - 1) * spacing;
+    pts.push([L + R2 * 0.6, top + 12]);
+    pts.push([L + R2, top * 0.5]);
+    pts.push([L + R2 * 0.85, -R2 * 0.45]);
+    pts.push([L * 0.5, -R2 * 0.95]);
+    pts.push([-R2 * 0.7, -R2 * 0.5]);
+    pts.push([-R2 * 0.55, 0]);
+    const cx = L / 2, cz = top / 2;
+    const rot = rand() * Math.PI * 2;
+    const cr = Math.cos(rot), sr = Math.sin(rot);
+    const mirror = rand() < 0.5 ? -1 : 1;
+    return pts.map(([x, z]) => {
+      const X = (x - cx) * mirror, Z = z - cz;
+      return [X * cr - Z * sr, X * sr + Z * cr];
+    });
+  }
+
+  /** Organic loop: points at increasing angles with strongly varying radii (bays, bulges, pinches). */
   _randomLayout(rand) {
-    const n = 8 + Math.floor(rand() * 6);
-    const baseR = 115 + rand() * 45;
-    const sx = 0.75 + rand() * 0.55;
-    const sz = 0.75 + rand() * 0.45;
+    const n = 11 + Math.floor(rand() * 6);
+    const baseR = 130 + rand() * 50;
+    const sx = 0.7 + rand() * 0.6;
+    const sz = 0.7 + rand() * 0.45;
     const radii = [];
-    for (let k = 0; k < n; k++) radii.push(0.45 + rand() * 0.6);
-    const smooth = radii.map((r, k) => 0.5 * r + 0.25 * (radii[(k + n - 1) % n] + radii[(k + 1) % n]));
+    for (let k = 0; k < n; k++) radii.push(rand() < 0.25 ? 0.3 + rand() * 0.2 : 0.65 + rand() * 0.5);
+    const smooth = radii.map((r, k) => 0.7 * r + 0.15 * (radii[(k + n - 1) % n] + radii[(k + 1) % n]));
     const rot = rand() * Math.PI * 2;
     const pts = [];
     for (let k = 0; k < n; k++) {
@@ -259,6 +353,30 @@ export class Track {
       pts.push([Math.cos(a) * r * sx, Math.sin(a) * r * sz]);
     }
     return pts;
+  }
+
+  /** Occasionally turn a long straight into an S-wiggle (never the start straight). */
+  _wiggle(pts, rand) {
+    if (rand() < 0.35) return pts;
+    const out = [];
+    const n = pts.length;
+    let done = 0;
+    for (let i = 0; i < n; i++) {
+      const a = pts[i], b = pts[(i + 1) % n];
+      out.push(a);
+      const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (done < 2 && i > 1 && i < n - 2 && len > 90 && rand() < 0.5) {
+        const dx = (b[0] - a[0]) / len, dz = (b[1] - a[1]) / len;
+        const amp = 8 + rand() * 7;
+        for (let k = 1; k <= 3; k++) {
+          const t = k / 4;
+          const off = Math.sin(t * Math.PI * 2) * amp;
+          out.push([a[0] + dx * len * t - dz * off, a[1] + dz * len * t + dx * off]);
+        }
+        done++;
+      }
+    }
+    return out;
   }
 
   _computeCenterLine(layout) {
@@ -284,133 +402,92 @@ export class Track {
     this.segmentLength = this.length / S;
   }
 
-  /** Reject layouts that are too short/long, have hairpins tighter than the road allows, or overlap. */
-  _isValid() {
-    if (this.length < 700 || this.length > 1500) return false;
+  /**
+   * Validate a layout: sensible length, no turn tighter than the road allows, and no two parts
+   * of the track too close — except genuine crossings, which become overpasses (at most two).
+   */
+  _isValid(rand) {
+    this.crossings = [];
+    if (this.length < 700 || this.length > 1650) return false;
     const seg = this.segmentLength;
-    const half = GROUND_SIZE / 2 - 40;
+    const half = GROUND_SIZE / 2 - 45;
     for (let i = 0; i < S; i++) {
       if (Math.abs(this.px[i]) > half || Math.abs(this.pz[i]) > half) return false;
       const dyaw = Math.abs(wrap(this.yaw[(i + 4) % S] - this.yaw[(i - 4 + S) % S]));
-      if (dyaw > 1e-4 && (8 * seg) / dyaw < 17) return false; // min turn radius
+      if (dyaw > 1e-4 && (8 * seg) / dyaw < 17) return false;
     }
-    const minDist = 2 * BARRIER_OFFSET + 10;
+
+    const minDist = 2 * MAX_BARRIER + 10;
     const minDist2 = minDist * minDist;
-    const minGap = Math.ceil(70 / seg);
-    for (let i = 0; i < S; i += 3) {
-      for (let j = i + minGap; j < S; j += 3) {
+    const minGap = Math.ceil(80 / seg);
+    const close = [];
+    for (let i = 0; i < S; i += 2) {
+      for (let j = i + minGap; j < S; j += 2) {
         if (S - (j - i) < minGap) break;
         const dx = this.px[i] - this.px[j], dz = this.pz[i] - this.pz[j];
-        if (dx * dx + dz * dz < minDist2) return false;
+        const d2 = dx * dx + dz * dz;
+        if (d2 < minDist2) close.push([i, j, d2]);
       }
+    }
+    if (close.length === 0) return true;
+
+    // Cluster close pairs into crossing zones.
+    const zones = [];
+    for (const [i, j, d2] of close) {
+      let z = zones.find((c) => circDist(c.i, i) < 90 && circDist(c.j, j) < 90);
+      if (!z) { z = { i, j, d2, pairs: [] }; zones.push(z); }
+      z.pairs.push([i, j]);
+      if (d2 < z.d2) { z.i = i; z.j = j; z.d2 = d2; }
+    }
+    if (zones.length > 2) return false;
+
+    const startZone = Math.ceil(70 / seg);
+    for (const z of zones) {
+      if (z.d2 > 25) return false; // near-miss, not a crossing
+      const ang = Math.abs(wrap(this.yaw[z.i] - this.yaw[z.j]));
+      const cross = Math.min(ang, Math.PI - ang);
+      if (cross < 0.6) return false; // too shallow to bridge cleanly
+      // Lift the branch that's further from the start line.
+      const di = circDist(z.i, 0), dj = circDist(z.j, 0);
+      const upper = di > dj ? z.i : z.j;
+      const lower = upper === z.i ? z.j : z.i;
+      const deckHalf = Math.ceil(((2 * MAX_BARRIER + 8) / Math.sin(cross) + 8) / seg);
+      const ramp = Math.ceil(55 / seg);
+      const span = deckHalf + ramp;
+      if (circDist(upper, 0) < span + startZone || circDist(lower, 0) < startZone) return false;
+      // Every close pair must be covered by the raised deck.
+      for (const [i, j] of z.pairs) {
+        const u = circDist(i, upper) < circDist(j, upper) ? i : j;
+        if (circDist(u, upper) > deckHalf) return false;
+      }
+      this.crossings.push({ upper, lower, deckHalf, ramp });
+    }
+    // Overpass spans must not overlap each other.
+    if (this.crossings.length === 2) {
+      const [a, b] = this.crossings;
+      const reach = a.deckHalf + a.ramp + b.deckHalf + b.ramp;
+      if (circDist(a.upper, b.upper) < reach || circDist(a.upper, b.lower) < a.deckHalf + a.ramp + 40
+        || circDist(b.upper, a.lower) < b.deckHalf + b.ramp + 40) return false;
     }
     return true;
   }
 
-  /** World position at sample i shifted `lat` metres to the kart's right and `fwd` metres forward. */
-  pointAt(i, lat, fwd = 0, out = { x: 0, z: 0 }) {
-    const j = ((i % S) + S) % S;
-    const tx = this.tx[j], tz = this.tz[j];
-    out.x = this.px[j] - tz * lat + tx * fwd;
-    out.z = this.pz[j] + tx * lat + tz * fwd;
-    return out;
-  }
-
-  _buildGround() {
-    const size = GROUND_SIZE;
-    const geo = new THREE.PlaneGeometry(size, size, 40, 40);
-    geo.rotateX(-Math.PI / 2);
-    const rand = mulberry32(this.seed ^ 0x9e3779b9);
-    paint(geo, this.theme.ground);
-    const col = geo.attributes.color;
-    for (let i = 0; i < col.count; i++) {
-      const v = 0.9 + rand() * 0.14;
-      col.setXYZ(i, col.getX(i) * v, col.getY(i) * v, col.getZ(i) * v);
-    }
-    const mesh = new THREE.Mesh(geo, this.renderer.toon({ vertexColors: true }));
-    this.group.add(mesh);
-  }
-
-  _buildRoad() {
-    const rb = new RibbonBuilder();
-    const H = this.height;
-    const a = { x: 0, z: 0 }, b = { x: 0, z: 0 }, c = { x: 0, z: 0 }, d = { x: 0, z: 0 };
-    const hAt = (i) => H[((i % S) + S) % S];
-    // Horizontal strip between lateral offsets lo..hi, following the road elevation.
-    const strip = (i, lo, hi, yOff, hex) => {
-      const y0 = hAt(i) + yOff, y1 = hAt(i + 1) + yOff;
-      this.pointAt(i, hi, 0, a);
-      this.pointAt(i + 1, hi, 0, b);
-      this.pointAt(i + 1, lo, 0, c);
-      this.pointAt(i, lo, 0, d);
-      rb.quad(a.x, y0, a.z, b.x, y1, b.z, c.x, y1, c.z, d.x, y0, d.z, hex);
-    };
-    // Vertical wall at lateral offset `lat` from the deck down to `bottom` (material is double-sided).
-    const skirt = (i, lat, bottom, hex) => {
-      const y0 = hAt(i), y1 = hAt(i + 1);
-      this.pointAt(i, lat, 0, a);
-      this.pointAt(i + 1, lat, 0, b);
-      rb.quad(a.x, y0, a.z, b.x, y1, b.z, b.x, Math.min(bottom, y1), b.z, a.x, Math.min(bottom, y0), a.z, hex);
-    };
-    const edge = BARRIER_OFFSET + 0.7;
-
-    for (let i = 0; i < S; i++) {
-      const band = Math.floor(i / 8) % 2 === 0;
-      strip(i, -HALF_WIDTH, HALF_WIDTH, 0.05, band ? 0x464a52 : 0x4d525b);
-      const curb = Math.floor(i / 3) % 2 === 0 ? 0xe63946 : 0xf5f5f5;
-      strip(i, HALF_WIDTH, HALF_WIDTH + CURB_WIDTH, 0.07, curb);
-      strip(i, -HALF_WIDTH - CURB_WIDTH, -HALF_WIDTH, 0.07, curb);
-      // white edge lines and dashed centre line
-      strip(i, HALF_WIDTH - 0.5, HALF_WIDTH - 0.2, 0.08, 0xeaeaea);
-      strip(i, -HALF_WIDTH + 0.2, -HALF_WIDTH + 0.5, 0.08, 0xeaeaea);
-      if (Math.floor(i / 5) % 2 === 0) strip(i, -0.18, 0.18, 0.08, 0xf2d64b);
-
-      // Elevated sections (bridges): concrete shoulders out to the railings plus side walls.
-      if (H[i] > 0.02 || H[(i + 1) % S] > 0.02) {
-        strip(i, HALF_WIDTH + CURB_WIDTH, edge, 0.06, 0x9aa0a8);
-        strip(i, -edge, -HALF_WIDTH - CURB_WIDTH, 0.06, 0x9aa0a8);
-        const overWater = this._isOverWater(i);
-        const bottom = overWater ? hAt(i) - 0.9 : 0;
-        skirt(i, edge, bottom, overWater ? 0x7d828a : 0xa08c74);
-        skirt(i, -edge, bottom, overWater ? 0x7d828a : 0xa08c74);
-      }
-    }
-
-    // Ice patches (snow theme): pale slick quads just above the asphalt.
-    for (const p of this.ice) {
-      for (let i = p.a; i < p.b; i++) {
-        const shade = (i - p.a) % 4 < 2 ? 0xd6f1ff : 0xc4e8fb;
-        strip(i, p.lo, p.hi, 0.075, shade);
-      }
-    }
-
-    // Chequered start/finish line across the road at sample 0.
-    const cols = 12, rows = 2, cell = (HALF_WIDTH * 2) / cols;
-    for (let r = 0; r < rows; r++) {
-      for (let k = 0; k < cols; k++) {
-        const lo = -HALF_WIDTH + k * cell, hi = lo + cell;
-        const f0 = -cell + r * cell, f1 = f0 + cell;
-        this.pointAt(0, hi, f0, a);
-        this.pointAt(0, hi, f1, b);
-        this.pointAt(0, lo, f1, c);
-        this.pointAt(0, lo, f0, d);
-        const hex = (r + k) % 2 === 0 ? 0x111111 : 0xffffff;
-        rb.quad(a.x, 0.09, a.z, b.x, 0.09, b.z, c.x, 0.09, c.z, d.x, 0.09, d.z, hex);
-      }
-    }
-    const mesh = new THREE.Mesh(rb.build(), this.renderer.toon({ vertexColors: true, side: THREE.DoubleSide }));
-    this.group.add(mesh);
-  }
-
   // ------------------------------------------------------------------ features
 
-  /** Pick bridge, tunnel and ice locations deterministically from the seed. */
+  /**
+   * Plan bridges/overpasses, tunnels, jumps, width variation, rolling hills, boost pads and
+   * hazards, then compose the final height profile.
+   */
   _planFeatures(rand) {
-    this.height.fill(0);
+    const t = this.theme;
+    const seg = this.segmentLength;
+    const range = ([a, b]) => a + Math.floor(rand() * (b - a + 1));
     this.bridges = [];
     this.tunnels = [];
-    this.ice = [];
-    const seg = this.segmentLength;
+    this.jumps = [];
+    this.pads = [];
+    this.hazards = [];
+
     const blocked = [];
     const reserve = (a, b) => blocked.push([a, b]);
     const overlaps = (a, b) => blocked.some(([c, d]) => {
@@ -419,27 +496,34 @@ export class Track {
     });
     const maxBend = (a, b) => {
       let m = 0;
-      for (let i = a; i <= b; i++) m = Math.max(m, Math.abs(wrap(this.yaw[i % S] - this.yaw[a % S])));
+      for (let i = a; i <= b; i++) m = Math.max(m, Math.abs(wrap(this.yaw[circ(i)] - this.yaw[circ(a)])));
       return m;
     };
-    reserve(S - Math.ceil(60 / seg), S + Math.ceil(50 / seg)); // start straight & grid
-    reserve(-Math.ceil(60 / seg), Math.ceil(50 / seg));
-    for (const f of [0.2, 0.48, 0.77]) reserve(Math.round(f * S) - 12, Math.round(f * S) + 12); // item boxes
+    const startA = S - Math.ceil(60 / seg), startB = S + Math.ceil(50 / seg);
+    reserve(startA, startB);
+    reserve(startA - S, startB - S);
+    for (const f of [0.2, 0.48, 0.77]) reserve(Math.round(f * S) - 12, Math.round(f * S) + 12);
 
-    // Minimum distance from the feature's centre line to any unrelated part of the track.
+    // Overpasses at the crossings found during validation.
+    for (const c of this.crossings) {
+      const a = c.upper - c.deckHalf - c.ramp, b = c.upper + c.deckHalf + c.ramp;
+      this.bridges.push({ type: 'overpass', a, b, deckA: c.upper - c.deckHalf, deckB: c.upper + c.deckHalf, rise: OVERPASS_RISE, lower: c.lower });
+      reserve(a - 8, b + 8);
+      reserve(c.lower - 40, c.lower + 40);
+    }
+
     const clear = (a, b, dist) => {
       const margin = Math.ceil(40 / seg);
       for (let i = a; i <= b; i += 2) {
-        const x = this.px[i % S], z = this.pz[i % S];
+        const x = this.px[circ(i)], z = this.pz[circ(i)];
         for (let j = 0; j < S; j += 2) {
-          const gap = Math.min(Math.abs(j - (i % S)), S - Math.abs(j - (i % S)));
-          if (gap < (b - a) / 2 + margin) continue;
+          if (circDist(j, i) < (b - a) / 2 + margin) continue;
           if ((x - this.px[j]) ** 2 + (z - this.pz[j]) ** 2 < dist * dist) return false;
         }
       }
       return true;
     };
-    const place = (count, lengthM, bend, list, clearance = 0) => {
+    const place = (count, lengthM, bend, list, extra, clearance = 0) => {
       const span = Math.round(lengthM / seg);
       for (let tries = 0; tries < 60 && list.length < count; tries++) {
         const a = Math.floor(rand() * S);
@@ -447,102 +531,499 @@ export class Track {
         if (overlaps(a - 8, b + 8) || maxBend(a, b) > bend) continue;
         if (clearance && !clear(a, b, clearance)) continue;
         reserve(a - 8, b + 8);
-        list.push({ a, b });
+        list.push({ a, b, ...extra });
       }
     };
-    place(rand() < 0.45 ? 2 : 1, 120, 0.9, this.bridges);
-    place(rand() < 0.35 ? 2 : 1, 75, 0.8, this.tunnels, TUNNEL_HILL.width + BARRIER_OFFSET + 3);
-
-    // Arched elevation profile for each bridge: smooth ramps up to a flat deck.
-    const RISE = 5.5;
+    const bridgeCount = this.crossings.length ? (rand() < 0.3 ? 1 : 0) : (rand() < 0.6 ? 1 : 0) + (rand() < 0.25 ? 1 : 0);
+    place(bridgeCount, 120, 0.9, this.bridges, { type: t.space ? 'span' : 'water', rise: BRIDGE_RISE });
+    if (!t.space) place(rand() < 0.5 ? 1 : rand() < 0.5 ? 2 : 0, 75, 0.8, this.tunnels, {}, TUNNEL_HILL.width + MAX_BARRIER + 3);
+    place(range(t.jumps), 11, 0.25, this.jumps, {});
     for (const br of this.bridges) {
-      const span = br.b - br.a;
+      if (br.type === 'overpass') continue;
       const ramp = Math.round(38 / seg);
       br.deckA = br.a + ramp;
       br.deckB = br.b - ramp;
-      for (let j = 0; j <= span; j++) {
-        let t = 1;
-        if (j < ramp) t = j / ramp;
-        else if (j > span - ramp) t = (span - j) / ramp;
-        this.height[(br.a + j) % S] = RISE * t * t * (3 - 2 * t);
-      }
     }
 
-    if (this.theme.id === 'snow') {
+    // Mask: 0 where the road must stay flat and standard width, blended smoothly.
+    const mask = new Float32Array(S).fill(1);
+    const zero = (a, b) => { for (let i = a; i <= b; i++) mask[circ(i)] = 0; };
+    zero(startA - 10, startB + 10);
+    for (const br of this.bridges) zero(br.a - 6, br.b + 6);
+    for (const c of this.crossings) zero(c.lower - 40, c.lower + 40);
+    for (const tu of this.tunnels) zero(tu.a - 10, tu.b + 10);
+    blurCircular(mask, 14, 2);
+    for (const br of this.bridges) for (let i = br.a; i <= br.b; i++) mask[circ(i)] = 0;
+    for (const tu of this.tunnels) for (let i = tu.a - 4; i <= tu.b + 4; i++) mask[circ(i)] = 0;
+    for (const c of this.crossings) for (let i = c.lower - 30; i <= c.lower + 30; i++) mask[circ(i)] = 0;
+
+    // Width: wide sweepers and narrow technical bits.
+    const wf = [1 + Math.floor(rand() * 3), 3 + Math.floor(rand() * 4)];
+    const wp = [rand() * 6.28, rand() * 6.28];
+    for (let i = 0; i < S; i++) {
+      const u = (i / S) * Math.PI * 2;
+      const g = (Math.sin(u * wf[0] + wp[0]) * 0.65 + Math.sin(u * wf[1] + wp[1]) * 0.35);
+      this.width[i] = BASE_WIDTH + WIDTH_VAR * g * mask[i];
+    }
+
+    // Rolling hills under the road.
+    const amp = t.hills[0] + rand() * (t.hills[1] - t.hills[0]);
+    const hf = [2 + Math.floor(rand() * 2), 3 + Math.floor(rand() * 3), 6 + Math.floor(rand() * 3)];
+    const hp = [rand() * 6.28, rand() * 6.28, rand() * 6.28];
+    const raw = new Float32Array(S);
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < S; i++) {
+      const u = (i / S) * Math.PI * 2;
+      raw[i] = Math.sin(u * hf[0] + hp[0]) + 0.6 * Math.sin(u * hf[1] + hp[1]) + 0.25 * Math.sin(u * hf[2] + hp[2]);
+      lo = Math.min(lo, raw[i]); hi = Math.max(hi, raw[i]);
+    }
+    for (let i = 0; i < S; i++) this.baseHeight[i] = amp * ((raw[i] - lo) / (hi - lo || 1)) * mask[i];
+    // Keep slopes drivable (≤ ~16%).
+    let maxSlope = 0;
+    for (let i = 0; i < S; i++) maxSlope = Math.max(maxSlope, Math.abs(this.baseHeight[(i + 1) % S] - this.baseHeight[i]) / seg);
+    if (maxSlope > 0.16) {
+      const k = 0.16 / maxSlope;
+      for (let i = 0; i < S; i++) this.baseHeight[i] *= k;
+    }
+
+    // Final height = hills + bridge/overpass rises + jump ramps.
+    this.height.set(this.baseHeight);
+    for (const br of this.bridges) {
+      const span = br.b - br.a;
+      const ramp = br.deckA - br.a;
+      for (let j = 0; j <= span; j++) {
+        let s = 1;
+        if (j < ramp) s = j / ramp;
+        else if (j > span - (br.b - br.deckB)) s = (span - j) / (br.b - br.deckB);
+        this.height[circ(br.a + j)] = br.rise * s * s * (3 - 2 * s);
+      }
+    }
+    const jumpH = t.id === 'snow' || t.id === 'rainbow' ? 2.4 : 1.9;
+    for (const jp of this.jumps) {
+      const n = jp.b - jp.a;
+      for (let j = 0; j <= n; j++) this.height[circ(jp.a + j)] += jumpH * Math.pow(j / n, 1.3);
+    }
+
+    // Boost pads: random ones plus one lined up before every jump.
+    const padLen = Math.max(3, Math.round(6 / seg));
+    for (const jp of this.jumps) {
+      const a = jp.a - Math.round(16 / seg);
+      this.pads.push({ a, b: a + padLen, lat: 0, half: 1.9 });
+    }
+    const wantPads = range(t.pads);
+    for (let tries = 0; tries < 80 && this.pads.length < wantPads + this.jumps.length; tries++) {
+      const a = Math.floor(rand() * S);
+      if (circDist(a, 0) < Math.ceil(50 / seg)) continue;
+      if (this.pads.some((p) => circDist(p.a, a) < 25)) continue;
+      const w = this.width[circ(a)] - 2.4;
+      this.pads.push({ a, b: a + padLen, lat: (rand() * 2 - 1) * w, half: 1.9 });
+    }
+
+    // Surface hazards (ice / sand).
+    if (t.hazard) {
       const n = 5 + Math.floor(rand() * 3);
-      for (let tries = 0; tries < 40 && this.ice.length < n; tries++) {
+      for (let tries = 0; tries < 50 && this.hazards.length < n; tries++) {
         const a = Math.floor(rand() * S);
         const b = a + Math.round((14 + rand() * 18) / seg);
-        if (a < Math.ceil(50 / seg) || b > S - Math.ceil(40 / seg)) continue; // keep the grid clear
+        if (a < Math.ceil(50 / seg) || b > S - Math.ceil(40 / seg)) continue;
+        if (this.pads.some((p) => circDist(p.a, a) < b - a + 6)) continue;
+        const w = this.width[a];
         const half = 2.5 + rand() * 3.5;
-        const mid = (rand() - 0.5) * (HALF_WIDTH * 2 - half * 2);
-        this.ice.push({ a, b, lo: mid - half, hi: mid + half });
+        const mid = (rand() - 0.5) * (w * 2 - half * 2);
+        this.hazards.push({ type: t.hazard, a, b, lo: mid - half, hi: mid + half });
       }
     }
   }
 
-  _isOverWater(i) {
+  _deckAt(i) {
     for (const br of this.bridges) {
-      for (const shift of [0, S]) if (i + shift >= br.deckA && i + shift < br.deckB) return true;
+      for (const shift of [0, S, -S]) if (i + shift >= br.deckA && i + shift < br.deckB) return br;
     }
-    return false;
+    return null;
   }
 
-  /** True if the given track sample / lateral offset lies on an ice patch. */
+  _inRange(idx, a, b) {
+    return (idx >= a && idx < b) || (idx + S >= a && idx + S < b) || (idx - S >= a && idx - S < b);
+  }
+
+  /** 'ice' | 'sand' | null for a sample / lateral offset. */
+  hazardAt(idx, lat) {
+    const hz = this.hazards;
+    for (let k = 0; k < hz.length; k++) {
+      const p = hz[k];
+      if (lat >= p.lo && lat <= p.hi && this._inRange(idx, p.a, p.b)) return p.type;
+    }
+    return null;
+  }
+
   isIce(idx, lat) {
-    const ice = this.ice;
-    for (let k = 0; k < ice.length; k++) {
-      const p = ice[k];
-      if (lat >= p.lo && lat <= p.hi && ((idx >= p.a && idx < p.b) || (idx + S >= p.a && idx + S < p.b))) return true;
+    return this.hazardAt(idx, lat) === 'ice';
+  }
+
+  /** True when a kart at this sample / lateral offset is on a boost pad. */
+  padAt(idx, lat) {
+    const pads = this.pads;
+    for (let k = 0; k < pads.length; k++) {
+      const p = pads[k];
+      if (Math.abs(lat - p.lat) <= p.half + 0.4 && this._inRange(idx, p.a, p.b)) return true;
     }
     return false;
   }
 
   heightAt(idx) {
-    return this.height[((idx % S) + S) % S];
+    return this.height[circ(idx)];
   }
 
-  /** Bridge colliders, pillars, water, tunnel shells and hills (one merged draw call). */
+  widthAt(idx) {
+    return this.width[circ(idx)];
+  }
+
+  /** Beyond this lateral offset a kart is off the tarmac. */
+  roadLimitAt(idx) {
+    return this.width[circ(idx)] + CURB_WIDTH;
+  }
+
+  barrierOffset(idx) {
+    return this.width[circ(idx)] + CURB_WIDTH + BARRIER_GAP;
+  }
+
+  /** World position at sample i shifted `lat` metres to the kart's right and `fwd` metres forward. */
+  pointAt(i, lat, fwd = 0, out = { x: 0, z: 0 }) {
+    const j = circ(i);
+    const tx = this.tx[j], tz = this.tz[j];
+    out.x = this.px[j] - tz * lat + tx * fwd;
+    out.z = this.pz[j] + tx * lat + tz * fwd;
+    return out;
+  }
+
+  // ------------------------------------------------------------------ terrain
+
+  _prepareTerrain(rand) {
+    this._noisePhase = [rand() * 100, rand() * 100, rand() * 100];
+    let r = 0;
+    for (let i = 0; i < S; i++) r = Math.max(r, Math.hypot(this.px[i], this.pz[i]));
+    this.oceanRadius = r + 60;
+  }
+
+  _noise(x, z) {
+    const [a, b, c] = this._noisePhase;
+    return Math.sin(x * 0.021 + a) * Math.cos(z * 0.017 + b) + 0.5 * Math.sin((x + z) * 0.037 + c) + 0.25 * Math.cos((x - z) * 0.06 + a);
+  }
+
+  /**
+   * Ground height at (x, z): rises to meet the road's rolling hills near the track and has its
+   * own gentle undulation further away. Returns { y, d } (d = distance past the barriers).
+   */
+  terrainAt(x, z, out = { y: 0, d: 0, j: 0 }) {
+    let best = Infinity, j = 0;
+    for (let i = 0; i < S; i += 2) {
+      const dx = x - this.px[i], dz = z - this.pz[i];
+      const d = dx * dx + dz * dz;
+      if (d < best) { best = d; j = i; }
+    }
+    const d = Math.sqrt(best) - (this.barrierOffset(j) + 0.7);
+    const near = 1 - smooth01(d / 38);
+    const far = Math.max(0, this._noise(x, z)) * (this.theme.groundNoise || 0) * smooth01((d - 8) / 40);
+    let y = this.baseHeight[j] * near + far;
+    if (this.theme.ocean) {
+      const r = Math.hypot(x, z);
+      if (r > this.oceanRadius) y = -1.5;
+      else if (r > this.oceanRadius - 30) y *= (this.oceanRadius - r) / 30;
+    }
+    out.y = y; out.d = d; out.j = j;
+    return out;
+  }
+
+  // ================================================================== building
+
+  _buildGround() {
+    const t = this.theme;
+    const size = GROUND_SIZE;
+    const seg = 100;
+    const geo = new THREE.PlaneGeometry(size, size, seg, seg);
+    geo.rotateX(-Math.PI / 2);
+    const rand = mulberry32(this.seed ^ 0x9e3779b9);
+    paint(geo, t.ground);
+    const pos = geo.attributes.position;
+    const col = geo.attributes.color;
+    const base = new THREE.Color(t.ground);
+    const c = new THREE.Color();
+    const tr = { y: 0, d: 0, j: 0 };
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i), z = pos.getZ(i);
+      this.terrainAt(x, z, tr);
+      pos.setY(i, tr.y - 0.05);
+      c.copy(base).multiplyScalar(0.9 + rand() * 0.14);
+      if (t.ocean) {
+        const r = Math.hypot(x, z);
+        if (r > this.oceanRadius) c.setHex(t.ocean).multiplyScalar(0.95 + rand() * 0.1);
+        else if (r > this.oceanRadius - 12) c.setHex(0xfff1c7);
+      }
+      if (t.lava && tr.d > 18 && this._noise(x * 1.7, z * 1.7) > 0.95) c.setHex(rand() < 0.5 ? 0xff5a1f : 0xff8c1a);
+      col.setXYZ(i, c.r, c.g, c.b);
+    }
+    geo.computeVertexNormals();
+    const mat = t.lava ? this.renderer.toon({ vertexColors: true, emissive: 0x220800 }) : this.renderer.toon({ vertexColors: true });
+    this.group.add(new THREE.Mesh(geo, mat));
+  }
+
+  _buildRoad() {
+    const t = this.theme;
+    const R = t.road;
+    const rb = new RibbonBuilder();
+    const H = this.height;
+    const a = { x: 0, z: 0 }, b = { x: 0, z: 0 }, c = { x: 0, z: 0 }, d = { x: 0, z: 0 };
+    const hAt = (i) => H[circ(i)];
+    const W = (i) => this.width[circ(i)];
+    // Band between lateral offsets computed per end from the local half-width.
+    const band = (i, fLo, fHi, yOff, hex) => {
+      const w0 = W(i), w1 = W(i + 1);
+      const y0 = hAt(i) + yOff, y1 = hAt(i + 1) + yOff;
+      this.pointAt(i, fHi(w0), 0, a);
+      this.pointAt(i + 1, fHi(w1), 0, b);
+      this.pointAt(i + 1, fLo(w1), 0, c);
+      this.pointAt(i, fLo(w0), 0, d);
+      rb.quad(a.x, y0, a.z, b.x, y1, b.z, c.x, y1, c.z, d.x, y0, d.z, hex);
+    };
+    const skirt = (i, fLat, bottom0, bottom1, hex) => {
+      const y0 = hAt(i), y1 = hAt(i + 1);
+      this.pointAt(i, fLat(W(i)), 0, a);
+      this.pointAt(i + 1, fLat(W(i + 1)), 0, b);
+      rb.quad(a.x, y0, a.z, b.x, y1, b.z, b.x, Math.min(bottom1, y1), b.z, a.x, Math.min(bottom0, y0), a.z, hex);
+    };
+    const edge = (w) => w + CURB_WIDTH + BARRIER_GAP + 0.7;
+    const inJump = (i) => this.jumps.some((jp) => this._inRange(i, jp.a, jp.b + 1));
+
+    for (let i = 0; i < S; i++) {
+      let asphalt = Math.floor(i / 8) % 2 === 0 ? R.a : R.b;
+      if (R.rainbow) asphalt = rainbowColor(Math.floor(i / 4));
+      if (R.planks) asphalt = i % 2 === 0 ? R.a : R.b;
+      band(i, (w) => -w, (w) => w, 0.05, asphalt);
+      const curb = Math.floor(i / 3) % 2 === 0 ? R.curbA : R.curbB;
+      band(i, (w) => w, (w) => w + CURB_WIDTH, 0.07, curb);
+      band(i, (w) => -w - CURB_WIDTH, (w) => -w, 0.07, curb);
+      if (R.line) {
+        band(i, (w) => w - 0.5, (w) => w - 0.2, 0.08, R.line);
+        band(i, (w) => -w + 0.2, (w) => -w + 0.5, 0.08, R.line);
+      }
+      if (R.center && Math.floor(i / 5) % 2 === 0) band(i, () => -0.18, () => 0.18, 0.08, R.center);
+
+      // Shoulders out to the railings, and side walls wherever the road is raised.
+      const deck = this._deckAt(i);
+      const raised = hAt(i) - this.baseHeight[i] > 0.02 || hAt(i + 1) - this.baseHeight[circ(i + 1)] > 0.02;
+      const shoulder = raised ? 0x9aa0a8 : R.shoulder;
+      band(i, (w) => w + CURB_WIDTH, edge, 0.045, shoulder);
+      band(i, (w) => -edge(w), (w) => -w - CURB_WIDTH, 0.045, shoulder);
+      if (raised || t.space) {
+        const slab = t.space || deck;
+        const b0 = slab ? hAt(i) - (t.space ? 1.2 : 0.9) : this.baseHeight[i] - 0.4;
+        const b1 = slab ? hAt(i + 1) - (t.space ? 1.2 : 0.9) : this.baseHeight[circ(i + 1)] - 0.4;
+        const hex = slab ? 0x7d828a : 0xa08c74;
+        skirt(i, edge, b0, b1, t.space ? rainbowColor(Math.floor(i / 4)) : hex);
+        skirt(i, (w) => -edge(w), b0, b1, t.space ? rainbowColor(Math.floor(i / 4)) : hex);
+        if (t.space) band(i, (w) => -edge(w), edge, -1.2, 0x2a1f5c); // underside
+      }
+      // Jump ramps get hazard chevrons.
+      if (inJump(i)) band(i, (w) => -w, (w) => w, 0.085, i % 2 === 0 ? 0xf4c20d : 0x222222);
+    }
+
+    // Hazard patches.
+    for (const p of this.hazards) {
+      for (let i = p.a; i < p.b; i++) {
+        const shade = p.type === 'ice'
+          ? ((i - p.a) % 4 < 2 ? 0xd6f1ff : 0xc4e8fb)
+          : ((i - p.a) % 3 === 0 ? 0xc9a063 : 0xd9b26f);
+        band(i, () => p.lo, () => p.hi, 0.075, shade);
+      }
+    }
+
+    // Boost pads: orange base with yellow chevrons pointing forward.
+    for (const p of this.pads) {
+      for (let i = p.a; i < p.b; i++) band(i, () => p.lat - p.half, () => p.lat + p.half, 0.09, 0xff7f11);
+      const n = p.b - p.a;
+      for (let k = 0; k < n; k += 2) {
+        const i = p.a + k;
+        const y = hAt(i) + 0.1;
+        const L = this.segmentLength * 1.6;
+        const tip = { x: 0, z: 0 }, l0 = { x: 0, z: 0 }, l1 = { x: 0, z: 0 }, t1 = { x: 0, z: 0 };
+        for (const sgn of [-1, 1]) {
+          this.pointAt(i, p.lat, L * 0.9, tip);
+          this.pointAt(i, p.lat, L * 0.4, t1);
+          this.pointAt(i, p.lat + sgn * p.half * 0.85, 0, l0);
+          this.pointAt(i, p.lat + sgn * p.half * 0.85, L * 0.5, l1);
+          rb.quad(tip.x, y, tip.z, l1.x, y, l1.z, l0.x, y, l0.z, t1.x, y, t1.z, 0xffe156);
+        }
+      }
+    }
+
+    // Chequered start/finish line across the road at sample 0.
+    const cols = 12, rows = 2, cell = (BASE_WIDTH * 2) / cols;
+    for (let r = 0; r < rows; r++) {
+      for (let k = 0; k < cols; k++) {
+        const lo = -BASE_WIDTH + k * cell, hi = lo + cell;
+        const f0 = -cell + r * cell, f1 = f0 + cell;
+        this.pointAt(0, hi, f0, a);
+        this.pointAt(0, hi, f1, b);
+        this.pointAt(0, lo, f1, c);
+        this.pointAt(0, lo, f0, d);
+        const hex = (r + k) % 2 === 0 ? 0x111111 : 0xffffff;
+        const y = hAt(0) + 0.095;
+        rb.quad(a.x, y, a.z, b.x, y, b.z, c.x, y, c.z, d.x, y, d.z, hex);
+      }
+    }
+    const mat = t.space
+      ? this.renderer.basic({ vertexColors: true })
+      : this.renderer.toon({ vertexColors: true, side: THREE.DoubleSide });
+    if (t.space) mat.side = THREE.DoubleSide;
+    this.group.add(new THREE.Mesh(rb.build(), mat));
+  }
+
+  /** One triangle-mesh collider for the whole driving surface (hills, ramps, decks). */
+  _buildRoadCollider() {
+    const verts = new Float32Array(S * 2 * 3);
+    const idx = new Uint32Array(S * 6);
+    const p = { x: 0, z: 0 };
+    for (let i = 0; i < S; i++) {
+      const e = this.barrierOffset(i) + 0.7;
+      const y = this.height[i];
+      this.pointAt(i, -e, 0, p);
+      verts[i * 6] = p.x; verts[i * 6 + 1] = y; verts[i * 6 + 2] = p.z;
+      this.pointAt(i, e, 0, p);
+      verts[i * 6 + 3] = p.x; verts[i * 6 + 4] = y; verts[i * 6 + 5] = p.z;
+      const n = (i + 1) % S;
+      idx.set([i * 2, i * 2 + 1, n * 2, i * 2 + 1, n * 2 + 1, n * 2], i * 6);
+    }
+    this.wallColliders.push(this.physics.addTrimesh(verts, idx));
+  }
+
+  _buildBarriers() {
+    const segments = Math.floor(S / BARRIER_STEP);
+    const count = segments * 2;
+    const geo = new THREE.BoxGeometry(1, 1, 1);
+    const mat = this.theme.space ? this.renderer.basic({ color: 0xffffff }) : this.renderer.toon({ color: 0xffffff });
+    const mesh = new THREE.InstancedMesh(geo, mat, count);
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const s = new THREE.Vector3();
+    const p = new THREE.Vector3();
+    const up = new THREE.Vector3(0, 1, 0);
+    const [ca, cb, cc] = this.theme.barrier.map((h) => new THREE.Color(h));
+    const a = { x: 0, z: 0 }, b = { x: 0, z: 0 };
+    const height = this.theme.space ? 0.8 : 1.3, thick = 0.9;
+    let n = 0;
+    for (const side of [1, -1]) {
+      for (let k = 0; k < segments; k++) {
+        const i = k * BARRIER_STEP;
+        this.pointAt(i, side * this.barrierOffset(i), 0, a);
+        this.pointAt(i + BARRIER_STEP, side * this.barrierOffset(i + BARRIER_STEP), 0, b);
+        const dx = b.x - a.x, dz = b.z - a.z;
+        const len = Math.hypot(dx, dz) + 0.35;
+        const yaw = Math.atan2(dx, dz);
+        const cx = (a.x + b.x) / 2, cz = (a.z + b.z) / 2;
+        const cy = (this.heightAt(i) + this.heightAt(i + BARRIER_STEP)) / 2 + height / 2;
+        q.setFromAxisAngle(up, yaw);
+        m.compose(p.set(cx, cy, cz), q, s.set(thick, height, len));
+        mesh.setMatrixAt(n, m);
+        mesh.setColorAt(n, this.theme.space ? new THREE.Color(rainbowColor(k)) : k % 2 === 0 ? (side > 0 ? ca : cc) : cb);
+        // Collider is taller than the visual barrier so Mega-sized karts can't climb over.
+        this.wallColliders.push(this.physics.addWall(cx, cy + 1.6, cz, thick / 2, 1.3 + 1.6, len / 2, yaw));
+        n++;
+      }
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.instanceColor.needsUpdate = true;
+    mesh.computeBoundingSphere();
+    this.group.add(mesh);
+  }
+
+  _buildGantry() {
+    const W = this.barrierOffset(0) + 0.8;
+    const parts = [
+      box(1.2, 8, 1.2, -W, 4, 0, 0x2b2d42),
+      box(1.2, 8, 1.2, W, 4, 0, 0x2b2d42),
+      box(W * 2 + 1.2, 1.4, 1.0, 0, 8.2, 0, 0x2b2d42),
+    ];
+    const cols = 16, cell = (W * 2) / cols;
+    for (let r = 0; r < 2; r++) {
+      for (let k = 0; k < cols; k++) {
+        const hex = (r + k) % 2 === 0 ? 0x111111 : 0xffffff;
+        parts.push(box(cell, 0.65, 1.1, -W + cell * (k + 0.5), 7.85 + r * 0.7, 0, hex));
+      }
+    }
+    parts.push(cylinder(0.08, 0.08, 2.4, 6, -W, 10, 0, 0xdddddd));
+    parts.push(cylinder(0.08, 0.08, 2.4, 6, W, 10, 0, 0xdddddd));
+    parts.push(box(0.05, 0.9, 1.4, -W, 10.7, 0.75, 0xe63946));
+    parts.push(box(0.05, 0.9, 1.4, W, 10.7, 0.75, 0x2a9df4));
+    const mesh = new THREE.Mesh(merge(parts), this.renderer.toon({ vertexColors: true }));
+    mesh.position.set(this.px[0], this.height[0], this.pz[0]);
+    mesh.rotation.y = this.yaw[0];
+    this.group.add(mesh);
+  }
+
+  _buildArches() {
+    const W = EDGE_STD - 0.7;
+    const geo = merge([
+      box(0.6, 6, 0.6, -W, 3, 0, 0xffffff),
+      box(0.6, 6, 0.6, W, 3, 0, 0xffffff),
+      box(W * 2 + 0.6, 0.8, 0.5, 0, 6.2, 0, 0xffffff),
+      box(W * 2 - 1, 0.35, 0.55, 0, 5.5, 0, 0x222222),
+    ]);
+    const archCps = [];
+    for (let k = 2; k < CHECKPOINTS; k += 3) {
+      const idx = this.checkpointIdx[k];
+      if (!this.tunnels.some((tu) => this._inRange(idx, tu.a - 6, tu.b + 6))) archCps.push(idx);
+    }
+    const mesh = new THREE.InstancedMesh(geo, this.renderer.toon({ vertexColors: true }), Math.max(1, archCps.length));
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const s = new THREE.Vector3();
+    const up = new THREE.Vector3(0, 1, 0);
+    const p = new THREE.Vector3();
+    const palette = [0x2a9df4, 0xf4c20d, 0x2ec27e, 0x9b5de5];
+    const c = new THREE.Color();
+    archCps.forEach((idx, n) => {
+      q.setFromAxisAngle(up, this.yaw[idx]);
+      m.compose(p.set(this.px[idx], this.height[idx], this.pz[idx]), q, s.set(this.barrierOffset(idx) / W, 1, 1));
+      mesh.setMatrixAt(n, m);
+      mesh.setColorAt(n, c.setHex(palette[n % palette.length]));
+    });
+    mesh.count = archCps.length;
+    if (mesh.count === 0) return;
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.instanceColor.needsUpdate = true;
+    mesh.computeBoundingSphere();
+    this.group.add(mesh);
+  }
+
+  /** Bridge/overpass pillars, ponds, tunnel shells, portals and hills (one merged draw call). */
   _buildFeatures() {
     const parts = [];
     const p = { x: 0, z: 0 }, q = { x: 0, z: 0 };
-    const edge = BARRIER_OFFSET + 0.7;
-    const hillColor = { meadow: 0x6f8f55, desert: 0xc48a55, snow: 0xf1f5f9, autumn: 0x8a7a55 }[this.theme.id];
-    const waterColor = this.theme.id === 'snow' ? 0xa8dcf5 : 0x3a9ad9;
+    const edge = EDGE_STD;
+    const t = this.theme;
 
     for (const br of this.bridges) {
-      // Physics deck: a trimesh strip following the elevation profile, as wide as the railings.
-      const n = br.b - br.a + 1;
-      const verts = new Float32Array(n * 2 * 3);
-      const idx = new Uint32Array((n - 1) * 6);
-      for (let j = 0; j < n; j++) {
-        const i = br.a + j;
-        const y = this.heightAt(i);
-        this.pointAt(i, -edge, 0, p);
-        this.pointAt(i, edge, 0, q);
-        verts.set([p.x, y, p.z, q.x, y, q.z], j * 6);
-        if (j < n - 1) idx.set([j * 2, j * 2 + 1, j * 2 + 2, j * 2 + 1, j * 2 + 3, j * 2 + 2], j * 6);
-      }
-      this.wallColliders.push(this.physics.addTrimesh(verts, idx));
-
-      // Pillars under the deck.
+      // Pillars under the deck (kept clear of any road passing underneath).
       const pillarStep = Math.max(4, Math.round(9 / this.segmentLength));
       for (let i = br.deckA; i <= br.deckB; i += pillarStep) {
         const h = this.heightAt(i);
         for (const side of [-1, 1]) {
           this.pointAt(i, side * (edge - 0.6), 0, p);
+          if (br.type === 'overpass' && this._nearOtherRoad(p.x, p.z, br, 2.5)) continue;
+          if (t.space) continue;
           parts.push(box(1.1, h, 1.1, p.x, h / 2 - 0.3, p.z, 0x8b9099));
         }
       }
-      // Pond under the deck, oriented along the road.
-      const mid = Math.round((br.deckA + br.deckB) / 2) % S;
-      const lenHalf = ((br.deckB - br.deckA) * this.segmentLength) / 2 + 2;
-      const pond = new THREE.CircleGeometry(1, 28);
-      pond.rotateX(-Math.PI / 2);
-      pond.scale(20, 1, lenHalf);
-      pond.rotateY(this.yaw[mid]);
-      pond.translate(this.px[mid], 0.03, this.pz[mid]);
-      parts.push(paint(pond.toNonIndexed(), waterColor));
+      if (br.type === 'water') {
+        const mid = circ(Math.round((br.deckA + br.deckB) / 2));
+        const lenHalf = ((br.deckB - br.deckA) * this.segmentLength) / 2 + 2;
+        const pond = new THREE.CircleGeometry(1, 28);
+        pond.rotateX(-Math.PI / 2);
+        pond.scale(20, 1, lenHalf);
+        pond.rotateY(this.yaw[mid]);
+        pond.translate(this.px[mid], 0.03, this.pz[mid]);
+        parts.push(paint(pond.toNonIndexed(), t.water));
+      }
     }
 
     for (const tu of this.tunnels) {
@@ -567,18 +1048,15 @@ export class Track {
           const a0 = prev[k], a1 = prev[k + 1], b1 = cur[k + 1], b0 = cur[k];
           shell.quad(a0[0], a0[1], a0[2], a1[0], a1[1], a1[2], b1[0], b1[1], b1[2], b0[0], b0[1], b0[2], hex);
         }
-        // ceiling light strip
         if (((i / step) | 0) % 3 === 0) {
           this.pointAt(i, 0, 0, p);
-          parts.push(box(3.2, 0.2, 0.8, p.x, this.heightAt(i) + RY - 0.25, p.z, 0xfff3b0, 0, this.yaw[i % S], 0));
+          parts.push(box(3.2, 0.2, 0.8, p.x, this.heightAt(i) + RY - 0.25, p.z, 0xfff3b0, 0, this.yaw[circ(i)], 0));
         }
         prev = cur;
       }
       const shellGeo = shell.build();
       shellGeo.computeVertexNormals();
       parts.push(shellGeo);
-      // Portal frames: a continuous stone band that follows the (elliptical) arch, with a
-      // front face, back face and outer rim so it reads as a solid collar.
       const frameRb = new RibbonBuilder();
       const FW = 1.5, DEPTH = 1.4, FSEG = 20;
       const archPt = (i, th, grow, fwd) => {
@@ -590,10 +1068,10 @@ export class Track {
           const t0 = (k / FSEG) * Math.PI, t1 = ((k + 1) / FSEG) * Math.PI;
           const hex = k % 2 === 0 ? 0x5d554d : 0x685f56;
           for (const [g0, g1, f0, f1] of [
-            [0, FW, dir * DEPTH, dir * DEPTH], // outward face
-            [0, FW, 0, 0], // inner face (flush with the hill)
-            [FW, FW, 0, dir * DEPTH], // outer rim
-            [0, 0, 0, dir * DEPTH], // inner rim
+            [0, FW, dir * DEPTH, dir * DEPTH],
+            [0, FW, 0, 0],
+            [FW, FW, 0, dir * DEPTH],
+            [0, 0, 0, dir * DEPTH],
           ]) {
             const q0 = archPt(i, t0, g0, f0), q1 = archPt(i, t1, g0, f0);
             const q2 = archPt(i, t1, g1, f1), q3 = archPt(i, t0, g1, f1);
@@ -604,7 +1082,7 @@ export class Track {
       const frameGeo = frameRb.build();
       frameGeo.computeVertexNormals();
       parts.push(frameGeo);
-      parts.push(this._tunnelHill(tu, R, RY, hillColor));
+      parts.push(this._tunnelHill(tu, R, RY, t.hillColor));
     }
 
     if (parts.length === 0) return;
@@ -614,15 +1092,21 @@ export class Track {
       }
       if (!g.attributes.normal) g.computeVertexNormals();
     }
-    const mesh = new THREE.Mesh(merge(parts), this.renderer.toon({ vertexColors: true, side: THREE.DoubleSide }));
-    this.group.add(mesh);
+    this.group.add(new THREE.Mesh(merge(parts), this.renderer.toon({ vertexColors: true, side: THREE.DoubleSide })));
   }
 
-  /**
-   * Hill swept along the (possibly curved) tunnel: one cross-section per sample, so the rock
-   * always encloses the arch and follows the road. Each end gets a vertical portal face with
-   * an arch-shaped opening, so nothing pokes through and the hill meets the ground at its sides.
-   */
+  /** Is (x, z) on or beside a part of the road that isn't this bridge's own span? */
+  _nearOtherRoad(x, z, br, margin) {
+    for (let i = 0; i < S; i += 2) {
+      if (this._inRange(i, br.a - 4, br.b + 4)) continue;
+      const dx = x - this.px[i], dz = z - this.pz[i];
+      const r = this.barrierOffset(i) + margin;
+      if (dx * dx + dz * dz < r * r) return true;
+    }
+    return false;
+  }
+
+  /** Hill swept along the tunnel with arch-shaped portal faces at both ends. */
   _tunnelHill(tu, R, RY, hex) {
     const rb = new RibbonBuilder();
     const { width: HW, height: HH } = TUNNEL_HILL;
@@ -630,13 +1114,11 @@ export class Track {
     const p = { x: 0, z: 0 };
     const col = new THREE.Color();
     const base = new THREE.Color(hex);
-    // Outer profile: lateral offset + height for u in [0,1] across the hill.
     const outer = (u) => {
       const lat = -HW + 2 * HW * u;
       const t = 1 - (lat / HW) ** 2;
       return [lat, HH * Math.pow(Math.max(0, t), 0.6)];
     };
-    // Inner profile (portal opening): ground outside the arch, arch curve inside it.
     const inner = (u) => {
       const lat = -HW + 2 * HW * u;
       if (Math.abs(lat) >= R) return [lat, 0];
@@ -646,11 +1128,7 @@ export class Track {
       this.pointAt(i, lat, 0, p);
       return [p.x, this.heightAt(i) + y, p.z];
     };
-    const shade = (k, i) => {
-      const v = 0.9 + 0.1 * Math.sin(k * 1.7 + i * 0.9);
-      return col.copy(base).multiplyScalar(v).getHex();
-    };
-    // Surface.
+    const shade = (k, i) => col.copy(base).multiplyScalar(0.9 + 0.1 * Math.sin(k * 1.7 + i * 0.9)).getHex();
     const step = 2;
     for (let i = tu.a; i < tu.b; i += step) {
       const j = Math.min(i + step, tu.b);
@@ -660,7 +1138,6 @@ export class Track {
         rb.quad(a0[0], a0[1], a0[2], b0[0], b0[1], b0[2], b1[0], b1[1], b1[2], a1[0], a1[1], a1[2], shade(k, i));
       }
     }
-    // Portal faces.
     for (const i of [tu.a, tu.b]) {
       for (let k = 0; k < N * 2; k++) {
         const u0 = k / (N * 2), u1 = (k + 1) / (N * 2);
@@ -675,12 +1152,11 @@ export class Track {
     return g;
   }
 
-  /** Keep scenery out of bridge ponds and tunnel hills. */
+  /** Keep scenery out of ponds, overpasses and tunnel hills. */
   _nearFeature(x, z) {
-    const lists = [this.bridges, this.tunnels];
-    for (const list of lists) {
+    for (const list of [this.bridges, this.tunnels]) {
       for (const f of list) {
-        const mid = Math.round((f.a + f.b) / 2) % S;
+        const mid = circ(Math.round((f.a + f.b) / 2));
         const r = ((f.b - f.a) * this.segmentLength) / 2 + TUNNEL_HILL.width + 6;
         if ((x - this.px[mid]) ** 2 + (z - this.pz[mid]) ** 2 < r * r) return true;
       }
@@ -688,168 +1164,54 @@ export class Track {
     return false;
   }
 
-  _buildBarriers() {
-    const segments = Math.floor(S / BARRIER_STEP);
-    const count = segments * 2;
-    const geo = new THREE.BoxGeometry(1, 1, 1);
-    const mesh = new THREE.InstancedMesh(geo, this.renderer.toon({ color: 0xffffff }), count);
-    const m = new THREE.Matrix4();
-    const q = new THREE.Quaternion();
-    const s = new THREE.Vector3();
-    const p = new THREE.Vector3();
-    const up = new THREE.Vector3(0, 1, 0);
-    const colA = new THREE.Color(0xd62828), colB = new THREE.Color(0xf1f1f1), colC = new THREE.Color(0x1d4ed8);
-    const a = { x: 0, z: 0 }, b = { x: 0, z: 0 };
-    const height = 1.3, thick = 0.9;
-    let n = 0;
-    for (const side of [1, -1]) {
-      for (let k = 0; k < segments; k++) {
-        const i = k * BARRIER_STEP;
-        this.pointAt(i, side * BARRIER_OFFSET, 0, a);
-        this.pointAt(i + BARRIER_STEP, side * BARRIER_OFFSET, 0, b);
-        const dx = b.x - a.x, dz = b.z - a.z;
-        const len = Math.hypot(dx, dz) + 0.35;
-        const yaw = Math.atan2(dx, dz);
-        const cx = (a.x + b.x) / 2, cz = (a.z + b.z) / 2;
-        const cy = (this.heightAt(i) + this.heightAt(i + BARRIER_STEP)) / 2 + height / 2;
-        q.setFromAxisAngle(up, yaw);
-        m.compose(p.set(cx, cy, cz), q, s.set(thick, height, len));
-        mesh.setMatrixAt(n, m);
-        mesh.setColorAt(n, k % 2 === 0 ? (side > 0 ? colA : colC) : colB);
-        // Collider is much taller than the visual barrier so Mega-sized karts can't climb over.
-        this.wallColliders.push(this.physics.addWall(cx, cy + 1.6, cz, thick / 2, height + 1.6, len / 2, yaw));
-        n++;
-      }
-    }
-    mesh.instanceMatrix.needsUpdate = true;
-    mesh.instanceColor.needsUpdate = true;
-    mesh.computeBoundingSphere();
-    this.group.add(mesh);
-  }
-
-  _buildGantry() {
-    const W = BARRIER_OFFSET + 0.8;
-    const parts = [
-      box(1.2, 8, 1.2, -W, 4, 0, 0x2b2d42),
-      box(1.2, 8, 1.2, W, 4, 0, 0x2b2d42),
-      box(W * 2 + 1.2, 1.4, 1.0, 0, 8.2, 0, 0x2b2d42),
-    ];
-    const cols = 16, cell = (W * 2) / cols;
-    for (let r = 0; r < 2; r++) {
-      for (let k = 0; k < cols; k++) {
-        const hex = (r + k) % 2 === 0 ? 0x111111 : 0xffffff;
-        parts.push(box(cell, 0.65, 1.1, -W + cell * (k + 0.5), 7.85 + r * 0.7, 0, hex));
-      }
-    }
-    // flag poles on top
-    parts.push(cylinder(0.08, 0.08, 2.4, 6, -W, 10, 0, 0xdddddd));
-    parts.push(cylinder(0.08, 0.08, 2.4, 6, W, 10, 0, 0xdddddd));
-    parts.push(box(0.05, 0.9, 1.4, -W, 10.7, 0.75, 0xe63946));
-    parts.push(box(0.05, 0.9, 1.4, W, 10.7, 0.75, 0x2a9df4));
-    const mesh = new THREE.Mesh(merge(parts), this.renderer.toon({ vertexColors: true }));
-    mesh.position.set(this.px[0], 0, this.pz[0]);
-    mesh.rotation.y = this.yaw[0];
-    this.group.add(mesh);
-  }
-
-  _buildArches() {
-    const W = BARRIER_OFFSET;
-    const geo = merge([
-      box(0.6, 6, 0.6, -W, 3, 0, 0xffffff),
-      box(0.6, 6, 0.6, W, 3, 0, 0xffffff),
-      box(W * 2 + 0.6, 0.8, 0.5, 0, 6.2, 0, 0xffffff),
-      box(W * 2 - 1, 0.35, 0.55, 0, 5.5, 0, 0x222222),
-    ]);
-    const archCps = [];
-    for (let k = 2; k < CHECKPOINTS; k += 3) archCps.push(this.checkpointIdx[k]);
-    const mesh = new THREE.InstancedMesh(geo, this.renderer.toon({ vertexColors: true }), archCps.length);
-    const m = new THREE.Matrix4();
-    const q = new THREE.Quaternion();
-    const one = new THREE.Vector3(1, 1, 1);
-    const up = new THREE.Vector3(0, 1, 0);
-    const p = new THREE.Vector3();
-    const palette = [0x2a9df4, 0xf4c20d, 0x2ec27e, 0x9b5de5];
-    const c = new THREE.Color();
-    archCps.forEach((idx, n) => {
-      q.setFromAxisAngle(up, this.yaw[idx]);
-      m.compose(p.set(this.px[idx], this.height[idx], this.pz[idx]), q, one);
-      mesh.setMatrixAt(n, m);
-      mesh.setColorAt(n, c.setHex(palette[n % palette.length]));
-    });
-    mesh.instanceMatrix.needsUpdate = true;
-    mesh.instanceColor.needsUpdate = true;
-    mesh.computeBoundingSphere();
-    this.group.add(mesh);
-  }
-
-  /** Brute-force distance to the centre line; only used at build time. */
-  _distanceToCenter(x, z) {
-    let best = Infinity;
-    for (let i = 0; i < S; i += 2) {
-      const dx = x - this.px[i], dz = z - this.pz[i];
-      const d = dx * dx + dz * dz;
-      if (d < best) best = d;
-    }
-    return Math.sqrt(best);
-  }
-
   _buildScenery(rand) {
-    const trunkGeo = cylinder(0.35, 0.5, 2.2, 5, 0, 1.1, 0, 0x7a4b2a);
-    const leafGeo = merge([
-      cylinder(0, 2.6, 4.2, 7, 0, 4.0, 0, 0xffffff),
-      cylinder(0, 2.0, 3.2, 7, 0, 5.8, 0, 0xffffff),
-    ]);
-    const treeCount = 240;
-    const trunks = new THREE.InstancedMesh(trunkGeo, this.renderer.toon({ vertexColors: true }), treeCount);
-    const leaves = new THREE.InstancedMesh(leafGeo, this.renderer.toon({ vertexColors: true }), treeCount);
-    const m = new THREE.Matrix4();
-    const q = new THREE.Quaternion();
-    const s = new THREE.Vector3();
-    const p = new THREE.Vector3();
-    const up = new THREE.Vector3(0, 1, 0);
-    const c = new THREE.Color();
-    const greens = this.theme.leaves;
-    let placed = 0, attempts = 0;
-    while (placed < treeCount && attempts < 5000) {
-      attempts++;
-      const x = (rand() - 0.5) * 640;
-      const z = (rand() - 0.5) * 640;
-      if (this._distanceToCenter(x, z) < BARRIER_OFFSET + 7 || this._nearFeature(x, z)) continue;
-      const sc = 0.8 + rand() * 0.9;
-      q.setFromAxisAngle(up, rand() * Math.PI * 2);
-      m.compose(p.set(x, 0, z), q, s.set(sc, sc * (0.9 + rand() * 0.4), sc));
-      trunks.setMatrixAt(placed, m);
-      leaves.setMatrixAt(placed, m);
-      leaves.setColorAt(placed, c.setHex(greens[Math.floor(rand() * greens.length)]));
-      placed++;
-    }
-    trunks.count = leaves.count = placed;
-    for (const mesh of [trunks, leaves]) {
-      mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-      mesh.computeBoundingSphere();
-      this.group.add(mesh);
+    const t = this.theme;
+    const tr = { y: 0, d: 0, j: 0 };
+    // Random ground spot `minD..maxD` metres beyond the barriers, clear of features/ocean.
+    const spot = (minD, maxD) => {
+      for (let tries = 0; tries < 12; tries++) {
+        const x = (rand() - 0.5) * 820;
+        const z = (rand() - 0.5) * 820;
+        this.terrainAt(x, z, tr);
+        if (tr.d < minD || tr.d > maxD) continue;
+        if (this._nearFeature(x, z)) continue;
+        if (t.ocean && Math.hypot(x, z) > this.oceanRadius - 18) continue;
+        return { x, y: tr.y, z };
+      }
+      return null;
+    };
+    buildScenery({ track: this, theme: t, rand, group: this.group, renderer: this.renderer, spot });
+    if (!t.space) {
+      buildGrandstand(this, this.renderer, this.group, rand);
+      buildTireStacks(this, this.renderer, this.group);
     }
 
-    // Distant low-poly mountains ring (one instanced draw call).
-    const mountGeo = new THREE.ConeGeometry(1, 1, 6);
-    mountGeo.translate(0, 0.5, 0);
-    const mountains = new THREE.InstancedMesh(mountGeo, this.renderer.toon({ color: 0xffffff }), 28);
-    const mc = this.theme.mountains;
-    for (let k = 0; k < 28; k++) {
-      const ang = (k / 28) * Math.PI * 2 + rand() * 0.1;
-      const r = 360 + rand() * 50;
-      const h = 60 + rand() * 90;
-      const w = 50 + rand() * 40;
-      q.setFromAxisAngle(up, rand() * Math.PI);
-      m.compose(p.set(Math.cos(ang) * r, -2, Math.sin(ang) * r), q, s.set(w, h, w));
-      mountains.setMatrixAt(k, m);
-      mountains.setColorAt(k, c.setHex(mc[k % mc.length]));
+    // Distant mountains ring (one instanced draw call).
+    if (t.mountains) {
+      const mountGeo = new THREE.ConeGeometry(1, 1, 6);
+      mountGeo.translate(0, 0.5, 0);
+      const mountains = new THREE.InstancedMesh(mountGeo, this.renderer.toon({ color: 0xffffff }), 28);
+      const m = new THREE.Matrix4();
+      const q = new THREE.Quaternion();
+      const s = new THREE.Vector3();
+      const p = new THREE.Vector3();
+      const up = new THREE.Vector3(0, 1, 0);
+      const c = new THREE.Color();
+      for (let k = 0; k < 28; k++) {
+        const ang = (k / 28) * Math.PI * 2 + rand() * 0.1;
+        const r = 380 + rand() * 50;
+        const h = 60 + rand() * 90;
+        const w = 50 + rand() * 40;
+        q.setFromAxisAngle(up, rand() * Math.PI);
+        m.compose(p.set(Math.cos(ang) * r, -2, Math.sin(ang) * r), q, s.set(w, h, w));
+        mountains.setMatrixAt(k, m);
+        mountains.setColorAt(k, c.setHex(t.mountains[k % t.mountains.length]));
+      }
+      mountains.instanceMatrix.needsUpdate = true;
+      mountains.instanceColor.needsUpdate = true;
+      mountains.computeBoundingSphere();
+      this.group.add(mountains);
     }
-    mountains.instanceMatrix.needsUpdate = true;
-    mountains.instanceColor.needsUpdate = true;
-    mountains.computeBoundingSphere();
-    this.group.add(mountains);
   }
 
   _computeMinimap() {
@@ -861,7 +1223,7 @@ export class Track {
     this.bounds = { minX, maxX, minZ, maxZ, cx: (minX + maxX) / 2, cz: (minZ + maxZ) / 2 };
   }
 
-  /** Map world XZ to minimap pixels. North-up with +X to the right; flip X so it matches the camera handedness. */
+  /** Map world XZ to minimap pixels. */
   toMinimap(x, z, size, pad, out) {
     const b = this.bounds;
     const span = Math.max(b.maxX - b.minX, b.maxZ - b.minZ);
@@ -876,18 +1238,16 @@ export class Track {
     const tmp = { x: 0, z: 0 };
     for (const frac of [0.2, 0.48, 0.77]) {
       const i = Math.round(frac * S);
-      for (const lat of [-6, -2, 2, 6]) {
-        this.pointAt(i, lat, 0, tmp);
+      const w = this.width[i];
+      for (const f of [-0.66, -0.22, 0.22, 0.66]) {
+        this.pointAt(i, f * w, 0, tmp);
         spots.push({ x: tmp.x, z: tmp.z, y: this.heightAt(i) });
       }
     }
     return spots;
   }
 
-  /**
-   * Coins scattered around the lap as singles and small clusters at random lateral positions.
-   * Seeded, so every peer gets the same list (coin pickups are addressed by index).
-   */
+  /** Coins scattered as singles and small clusters (seeded: identical on every peer). */
   _coinSpots() {
     const rand = mulberry32(this.seed ^ 0xc01c0);
     const spots = [];
@@ -895,13 +1255,14 @@ export class Track {
     const TOTAL = 30;
     const boxRows = [0.2, 0.48, 0.77].map((f) => Math.round(f * S));
     while (spots.length < TOTAL) {
-      const i = 30 + Math.floor(rand() * (S - 50)); // keep the start grid clear
+      const i = 30 + Math.floor(rand() * (S - 50));
       if (boxRows.some((r) => Math.abs(r - i) < 8)) continue;
-      const size = Math.min(TOTAL - spots.length, 1 + Math.floor(rand() * rand() * 4)); // mostly 1–2
-      const lat = (rand() - 0.5) * 14;
+      const size = Math.min(TOTAL - spots.length, 1 + Math.floor(rand() * rand() * 4));
+      const w = this.width[i] - 1.5;
+      const lat = (rand() * 2 - 1) * w;
       for (let k = 0; k < size; k++) {
         const j = i + k * 2;
-        const l = Math.max(-7.5, Math.min(7.5, lat + (rand() - 0.5) * 3));
+        const l = Math.max(-w, Math.min(w, lat + (rand() - 0.5) * 3));
         this.pointAt(j, l, 0, tmp);
         spots.push({ x: tmp.x, z: tmp.z, y: this.heightAt(j) });
       }
@@ -928,7 +1289,6 @@ export class Track {
         const d = dx * dx + dz * dz;
         if (d < bestD) { bestD = d; best = i; }
       }
-      // Lost track (respawn / teleport): fall back to a global search.
       if (bestD > 60 * 60) return this.nearestIndex(x, z, -1);
     }
     const dx = x - this.px[best], dz = z - this.pz[best];

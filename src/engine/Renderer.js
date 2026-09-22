@@ -63,6 +63,8 @@ export class Renderer {
     const sun = new THREE.DirectionalLight(0xffffff, 2.2);
     sun.position.set(80, 140, 60);
     this.scene.add(sun);
+    this.hemi = hemi;
+    this.sun = sun;
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.35));
   }
 
@@ -83,6 +85,26 @@ export class Renderer {
     sky.frustumCulled = false;
     this.sky = sky;
     this.scene.add(sky);
+  }
+
+  /** Per-track sky gradient, fog and light levels. */
+  setAtmosphere({ top, horizon, fogNear, fogFar, hemi = 1.4, sun = 2.2 }) {
+    const topC = new THREE.Color(top), horC = new THREE.Color(horizon);
+    const geo = this.sky.geometry;
+    const pos = geo.attributes.position, col = geo.attributes.color;
+    const c = new THREE.Color();
+    for (let i = 0; i < pos.count; i++) {
+      const t = Math.max(0, pos.getY(i) / 800);
+      c.copy(horC).lerp(topC, Math.pow(t, 0.6));
+      col.setXYZ(i, c.r, c.g, c.b);
+    }
+    col.needsUpdate = true;
+    this.scene.background.copy(horC);
+    this.scene.fog.color.copy(horC);
+    this.scene.fog.near = fogNear;
+    this.scene.fog.far = fogFar;
+    this.hemi.intensity = hemi;
+    this.sun.intensity = sun;
   }
 
   /** Shared cel-shaded material, cached by options. */

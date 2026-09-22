@@ -58,6 +58,7 @@ export class Kart {
     this.steerInput = 0; // smoothed steering
     this.bumpX = 0; this.bumpZ = 0; // knock-back velocity from kart collisions
     this.bumpCooldown = 0;
+    this.padCooldown = 0;
 
     // Interpolated render state
     this.x = spawn.x; this.y = KART.radius; this.z = spawn.z;
@@ -155,8 +156,17 @@ export class Kart {
     let lat = bvx * -cos + bvz * sin;
     let vy = v.y;
 
-    this.offroad = Math.abs(this.trackLateral) > this.track.roadLimit;
-    this.onIce = !this.offroad && this.track.isIce(this.trackIdx, this.trackLateral);
+    const hazard = this.track.hazardAt(this.trackIdx, this.trackLateral);
+    // Sand traps behave like off-road.
+    this.offroad = Math.abs(this.trackLateral) > this.track.roadLimitAt(this.trackIdx) || hazard === 'sand';
+    this.onIce = hazard === 'ice';
+    if (this.padCooldown > 0) this.padCooldown -= dt;
+    if (this.padCooldown <= 0 && this.grounded && this.track.padAt(this.trackIdx, this.trackLateral)) {
+      // Boost pad: short mushroom-style kick.
+      this.boostTimer = Math.max(this.boostTimer, 0.9);
+      this.pendingImpulse += 5;
+      this.padCooldown = 0.6;
+    }
     const iceGrip = this.onIce ? 0.12 : 1;
     const iceAccel = this.onIce ? 0.6 : 1;
     const iceTurn = this.onIce ? 0.8 : 1;

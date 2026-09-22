@@ -16,9 +16,13 @@ public broker handles signalling only; gameplay traffic is direct WebRTC.
 ## How a session works
 
 - **Rounds**: every race generates a new circuit from a seed (the host sends the seed, so all peers
-  build the same track). Most layouts are grid-based circuits (straights, hairpins, notches, chicanes);
-  some are flowing loops. Themes: meadow, desert, snow (with ice patches), autumn. Tracks can include
-  bridges (real elevated road over a pond) and tunnels bored through a hill.
+  build the same track). Layout families: grid circuits, organic loops, mountain-pass switchbacks and
+  (rarely) figure-8s whose crossing becomes an overpass; the host never repeats the previous round's
+  layout family or theme. Tracks get rolling hills, varying road width, jump ramps, boost pads,
+  bridges and tunnels. Themes are inspired by classic kart courses: Cowbell Meadows (cows, big hills),
+  Dune Dash (pyramids, sand traps), Frosty Summit (snowmen, ice), Toadstool Gorge (giant mushrooms),
+  Coconut Cove (palms, ocean), Magma Keep (lava, torches, volcano), Star Road (rainbow road in space)
+  and Spooky Hollow (plank road, ghosts, pumpkins).
 - **Garage** (in the room lobby and between rounds): coins you're holding when a round ends (plus a
   placement bonus) are banked. Spend them on Top Speed, Acceleration, Handling and Drift Boost, and on
   cosmetic parts (bodies, spoilers, wheels, headgear) plus paint/accent colours, previewed in 3D and
@@ -45,7 +49,8 @@ public broker handles signalling only; gameplay traffic is direct WebRTC.
 | `src/engine/Renderer.js` | WebGL renderer, toon material cache, chase camera, instanced blob shadows |
 | `src/engine/Physics.js` | Rapier world, fixed 60 Hz accumulator loop, ray helpers |
 | `src/engine/Particles.js` | Typed-array particle pool on one InstancedMesh |
-| `src/game/Track.js` | Seeded procedural circuit, bridges/tunnels/ice, barriers + colliders, progress queries |
+| `src/game/Track.js` | Seeded layouts (incl. crossings → overpasses), terrain, width, jumps, pads, bridges/tunnels, colliders, progress queries |
+| `src/game/TrackDecor.js` | Theme definitions and scenery builders (plants, rocks, theme props, grandstand, tire stacks) |
 | `src/game/Kart.js` | Arcade kart on a locked-rotation ball body: drift tiers, mini-turbo, spin-outs |
 | `src/game/ItemSystem.js` | Item boxes, coins, pooled shells/bananas, host-authoritative events |
 | `src/game/Upgrades.js` | Garage wallet, upgrade levels → physics modifiers, owned parts/look |

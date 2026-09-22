@@ -485,6 +485,7 @@ export class ItemSystem {
     for (let ki = 0; ki < karts.length; ki++) {
       const k = karts[ki];
       const kx = k.netX, kz = k.netZ;
+      const ky = k.y - k.radius; // kart base height
       const magnet = k.magnetTimer > 0;
       const boxReach = magnet ? magnetBoxR2 : boxR2;
       const coinReach = magnet ? magnetCoinR2 : coinR2;
@@ -493,6 +494,7 @@ export class ItemSystem {
         const b = this.boxes[i];
         if (!b.active) continue;
         const dx = kx - b.x, dz = kz - b.z;
+        if (Math.abs(ky - b.y) > 4) continue;
         if (dx * dx + dz * dz < boxReach) {
           const it = k.hasItemSlotFree ? this._rollItem(k, total) : ITEM.NONE;
           this._emit({ t: 'box', i, s: k.slot, it });
@@ -503,6 +505,7 @@ export class ItemSystem {
         const c = this.coins[i];
         if (!c.active) continue;
         const dx = kx - c.x, dz = kz - c.z;
+        if (Math.abs(ky - c.y) > 4) continue;
         if (dx * dx + dz * dz < coinReach) this._emit({ t: 'coin', i, s: k.slot });
       }
 
@@ -547,7 +550,7 @@ export class ItemSystem {
   _isSquashed(k, karts) {
     for (let j = 0; j < karts.length; j++) {
       const o = karts[j];
-      if (o === k || o.shrinkTimer > 0) continue;
+      if (o === k || o.shrinkTimer > 0 || Math.abs(o.y - k.y) > 3) continue;
       const reach = KART.radius * (k.megaScale + o.megaScale) + 0.3;
       const dx = k.netX - o.netX, dz = k.netZ - o.netZ;
       if (dx * dx + dz * dz < reach * reach) return true;
@@ -568,7 +571,7 @@ export class ItemSystem {
   _megaSquash(k, karts) {
     for (let j = 0; j < karts.length; j++) {
       const o = karts[j];
-      if (o === k || o.megaTimer > 0 || o.spinTimer > 0 || o.finished) continue;
+      if (o === k || o.megaTimer > 0 || o.spinTimer > 0 || o.finished || Math.abs(o.y - k.y) > 4) continue;
       const reach = KART.radius * (k.megaScale + o.megaScale) + 0.4;
       const dx = k.netX - o.netX, dz = k.netZ - o.netZ;
       if (dx * dx + dz * dz < reach * reach) this._emit({ t: 'hit', s: o.slot, id: 0 });
@@ -581,6 +584,7 @@ export class ItemSystem {
       const p = list[i];
       if (!p.active) continue;
       if (p.owner === k.slot && p.age < ownerGrace) continue;
+      if (Math.abs(k.y - k.radius - p.y) > 3) continue;
       const dx = k.netX - p.x, dz = k.netZ - p.z;
       if (dx * dx + dz * dz < r2) {
         this._emit({ t: 'hit', s: k.slot, id: p.id });
