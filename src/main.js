@@ -635,8 +635,7 @@ class Game {
   }
 
   openGarage() {
-    // Performance upgrades only make sense once a session (a run of rounds) has started.
-    this.garageUI.open({ perf: this.round > 0 });
+    this.garageUI.open();
     this.podium.visible = true;
     this.lobby.show(false);
     this.results.show(false);
