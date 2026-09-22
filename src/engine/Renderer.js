@@ -37,6 +37,11 @@ export class Renderer {
 
     // Chase-camera scratch state (no per-frame allocation).
     this._camPos = new THREE.Vector3(0, 20, -30);
+    this._camUp = new THREE.Vector3(0, 1, 0);
+    this._camQ = new THREE.Quaternion();
+    this._camE = new THREE.Euler(0, 0, 0, 'YXZ');
+    this._fwd = new THREE.Vector3();
+    this._up = new THREE.Vector3();
     this._camLook = new THREE.Vector3();
     this._tmp = new THREE.Vector3();
     this._shake = 0;
@@ -142,20 +147,28 @@ export class Renderer {
     this._shake = Math.min(1, this._shake + amount);
   }
 
-  /** Smooth third-person chase camera. Speed widens FOV; boosts push it further. */
-  updateChaseCamera(x, y, z, yaw, speed, boosting, dt, snap = false, zoom = 1) {
-    const fx = Math.sin(yaw);
-    const fz = Math.cos(yaw);
+  /**
+   * Smooth third-person chase camera that rides level with the kart: it follows the kart's
+   * pitch and roll, so on banked corners and hills the view stays aligned with the kart.
+   * Speed widens FOV; boosts push it further.
+   */
+  updateChaseCamera(x, y, z, yaw, speed, boosting, dt, snap = false, zoom = 1, pitch = 0, roll = 0) {
+    // Kart basis: forward and up vectors including pitch/roll.
+    this._camQ.setFromEuler(this._camE.set(pitch * 0.85, yaw, roll * 0.85));
+    const f = this._fwd.set(0, 0, 1).applyQuaternion(this._camQ);
+    const u = this._up.set(0, 1, 0).applyQuaternion(this._camQ);
     const back = (7.2 + Math.min(Math.abs(speed), 45) * 0.03) * zoom;
     const height = 3.1 * zoom;
 
-    const desired = this._tmp.set(x - fx * back, y + height, z - fz * back);
+    const desired = this._tmp.set(x - f.x * back + u.x * height, y - f.y * back + u.y * height, z - f.z * back + u.z * height);
     const k = snap ? 1 : 1 - Math.exp(-dt * 7);
     this._camPos.lerp(desired, k);
-    this._camLook.set(x + fx * 4 * zoom, y + 1.1 * zoom, z + fz * 4 * zoom);
+    this._camLook.set(x + f.x * 4 * zoom + u.x * 1.1 * zoom, y + f.y * 4 * zoom + u.y * 1.1 * zoom, z + f.z * 4 * zoom + u.z * 1.1 * zoom);
+    this._camUp.lerp(u, snap ? 1 : 1 - Math.exp(-dt * 6)).normalize();
 
     const cam = this.camera;
     cam.position.copy(this._camPos);
+    cam.up.copy(this._camUp);
     if (this._shake > 0) {
       const s = this._shake * 0.35;
       cam.position.x += (Math.random() - 0.5) * s;
@@ -176,6 +189,8 @@ export class Renderer {
   /** Slow orbit used on the menu screen. */
   updateOrbitCamera(time, cx, cz, radius) {
     const a = time * 0.08;
+    this.camera.up.set(0, 1, 0);
+    this._camUp.set(0, 1, 0);
     this.camera.position.set(cx + Math.cos(a) * radius, 70, cz + Math.sin(a) * radius);
     this.camera.lookAt(cx, 0, cz);
     if (this.camera.fov !== this.baseFov) {
@@ -190,6 +205,8 @@ export class Renderer {
   updateShowroomCamera(time, cx, cy, cz) {
     const a = time * 0.35;
     const cam = this.camera;
+    cam.up.set(0, 1, 0);
+    this._camUp.set(0, 1, 0);
     const wide = window.innerWidth >= 768;
     cam.position.set(cx + Math.sin(a) * 8.5, cy + 3.2, cz + Math.cos(a) * 8.5);
     // Aim right of the kart on wide screens so it sits in the free space left of the panel.

@@ -18,7 +18,8 @@ public broker handles signalling only; gameplay traffic is direct WebRTC.
 - **Rounds**: every race generates a new circuit from a seed (the host sends the seed, so all peers
   build the same track). Layout families: grid circuits, organic loops, mountain-pass switchbacks and
   (rarely) figure-8s whose crossing becomes an overpass; the host never repeats the previous round's
-  layout family or theme. Tracks get rolling hills, varying road width, jump ramps, boost pads,
+  layout family or theme. Tracks get rolling hills, banked corners (up to ~18°, ~22° on Star Road),
+  varying road width, jump ramps, boost pads,
   bridges and tunnels. Themes are inspired by classic kart courses: Cowbell Meadows (cows, big hills),
   Dune Dash (pyramids, sand traps), Frosty Summit (snowmen, ice), Toadstool Gorge (giant mushrooms),
   Coconut Cove (palms, ocean), Magma Keep (lava, torches, volcano), Star Road (rainbow road in space)

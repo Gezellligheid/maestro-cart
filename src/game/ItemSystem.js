@@ -239,7 +239,8 @@ export class ItemSystem {
       vx = sin * v;
       vz = cos * v;
       // Don't spawn inside a barrier when hugging a wall.
-      const hit = this.physics.castWall(x, this.track.heightAt(this.track.nearestIndex(x, z, -1)) + 0.5, z, sin, cos, 2.4 + ITEMS.shellRadius);
+      const idx0 = this.track.nearestIndex(x, z, -1);
+      const hit = this.physics.castWall(x, this.track.roadY(idx0, this.track.lastLateral) + 0.5, z, sin, cos, 2.4 + ITEMS.shellRadius);
       if (hit) { px = x; pz = z; }
     } else {
       px = x - sin * 2.2;
@@ -289,7 +290,7 @@ export class ItemSystem {
         p.owner = msg.o;
         p.x = msg.x; p.z = msg.z;
         p.idx = this.track.nearestIndex(p.x, p.z, -1);
-        p.y = this.track.heightAt(p.idx) + (msg.k === ITEM.BANANA ? 0.05 : 0.5);
+        p.y = this.track.roadY(p.idx, this.track.lastLateral) + (msg.k === ITEM.BANANA ? 0.05 : 0.5);
         p.target = Number.isInteger(msg.tg) ? msg.tg : -1;
         p.vx = msg.vx; p.vz = msg.vz;
         p.age = 0;
@@ -401,7 +402,7 @@ export class ItemSystem {
       const dx = s.vx / speed, dz = s.vz / speed;
       const dist = speed * dt;
       s.idx = this.track.nearestIndex(s.x, s.z, s.idx);
-      s.y = this.track.heightAt(s.idx) + 0.5;
+      s.y = this.track.roadY(s.idx, this.track.lastLateral) + 0.5;
       const hit = this.physics.castWall(s.x, s.y, s.z, dx, dz, dist + R);
       if (hit) {
         const travel = Math.max(0, hit.timeOfImpact - R);
@@ -440,7 +441,7 @@ export class ItemSystem {
       s.spin += dt * 16;
       if (s.age > ITEMS.redShellLife) { s.active = false; continue; }
       s.idx = this.track.nearestIndex(s.x, s.z, s.idx);
-      s.y = this.track.heightAt(s.idx) + 0.5;
+      s.y = this.track.roadY(s.idx, this.track.lastLateral) + 0.5;
 
       // Pick an aim point: the target when close, otherwise a point further along the track.
       const tk = s.target >= 0 ? this.getKart(s.target) : null;

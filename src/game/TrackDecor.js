@@ -382,8 +382,9 @@ const DECOR = {
     const p = { x: 0, z: 0 };
     for (let i = 0; i < track.samples && mesh.count < 60; i += 24) {
       const side = (i / 24) % 2 === 0 ? 1 : -1;
-      track.pointAt(i, side * (track.barrierOffset(i) + 1.2), 0, p);
-      put(mesh, p.x, track.heightAt(i), p.z, 0, 1);
+      const lat = side * (track.barrierOffset(i) + 1.2);
+      track.pointAt(i, lat, 0, p);
+      put(mesh, p.x, track.roadY(i, lat) - 0.3, p.z, 0, 1);
     }
     finish(mesh, group);
   },
@@ -497,8 +498,9 @@ export function buildTireStacks(track, renderer, group) {
     if (Math.abs(bend) < 0.55) continue;
     const side = bend > 0 ? 1 : -1; // outside of the turn
     for (let k = 0; k < 2; k++) {
-      track.pointAt(i, side * (track.barrierOffset(i) + 1.2 + k * 1.15), (k - 0.5) * 0.6, p);
-      put(mesh, p.x, track.heightAt(i), p.z, 0, 1);
+      const lat = side * (track.barrierOffset(i) + 1.2 + k * 1.15);
+      track.pointAt(i, lat, (k - 0.5) * 0.6, p);
+      put(mesh, p.x, track.roadY(i, lat) - 0.2, p.z, 0, 1);
     }
   }
   finish(mesh, group);

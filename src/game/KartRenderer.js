@@ -126,10 +126,25 @@ export class KartRenderer {
       const yaw = k.prevYaw + wrapAngle(k.yaw - k.prevYaw) * a;
       k.renderX = x; k.renderY = y; k.renderZ = z; k.renderYaw = yaw;
 
+      // Pitch and roll with the road surface (hills and banked corners). Airborne karts
+      // ease back towards level.
+      let tPitch = 0, tRoll = 0;
+      if (k.track && !k.preview && k.grounded) {
+        const tr = k.track, idx = k.trackIdx;
+        const grade = tr.gradeAt(idx), slope = tr.slopeAt(idx);
+        const d = yaw - tr.yaw[idx];
+        const cd = Math.cos(d), sd = Math.sin(d);
+        tPitch = -Math.atan(grade * cd - slope * sd); // gradient along the kart's nose
+        tRoll = -Math.atan(grade * sd + slope * cd); // gradient to the kart's right (local +x = left)
+      }
+      const blend = Math.min(1, dt * (k.grounded ? 10 : 2));
+      k.visPitch = (k.visPitch || 0) + (tPitch - (k.visPitch || 0)) * blend;
+      k.visRoll = (k.visRoll || 0) + (tRoll - (k.visRoll || 0)) * blend;
+
       const visualYaw = yaw + k.driftVisual + k.spinAngle;
       const lean = -k.steerVisual * Math.min(1, Math.abs(k.speed) / 25) * 0.08 + k.driftVisual * 0.15;
       const bob = k.boostTimer > 0 ? Math.sin(performance.now() * 0.05) * 0.03 : 0;
-      this._e.set(0, visualYaw, lean);
+      this._e.set(k.visPitch, visualYaw, lean + k.visRoll);
       this._q.setFromEuler(this._e);
       this._s.set(scale, scale, scale);
       this._kartMat.compose(this._p.set(x, y + bob, z), this._q, this._s);
@@ -174,7 +189,7 @@ export class KartRenderer {
       }
 
       if (!k.preview) {
-        shadows.add(x, k.track.heightAt(k.trackIdx), z, 2.6 * scale);
+        shadows.add(x, k.track.roadY(k.trackIdx, k.trackLateral || 0), z, 2.6 * scale);
         if (emitSparks) this._emitEffects(k, x, y, z, visualYaw, scale);
       }
     }

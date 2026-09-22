@@ -453,6 +453,7 @@ class Game {
       const k = this.karts[i];
       if (k.simulated) continue;
       k.trackIdx = this.track.nearestIndex(k.x, k.z, k.trackIdx);
+      k.trackLateral = this.track.lastLateral;
       const ip = this.interp[k.slot];
       if (ip.sample(this.now)) {
         const o = ip.out;
@@ -718,7 +719,7 @@ class Game {
       this.renderer.updateShowroomCamera(time, SHOWROOM.x, SHOWROOM.y, SHOWROOM.z);
     } else if (this.inRace && lk) {
       const zoom = 1 + (lk.megaScale - 1) * 0.55;
-      this.renderer.updateChaseCamera(lk.renderX, lk.renderY, lk.renderZ, lk.renderYaw + lk.driftVisual * 0.35, lk.speed, lk.boostTimer > 0, dt, false, zoom);
+      this.renderer.updateChaseCamera(lk.renderX, lk.renderY, lk.renderZ, lk.renderYaw + lk.driftVisual * 0.35, lk.speed, lk.boostTimer > 0, dt, false, zoom, lk.visPitch || 0, lk.visRoll || 0);
       this.hud.update(dt, {
         kart: lk,
         standings: this.race.standings,

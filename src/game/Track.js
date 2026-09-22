@@ -71,6 +71,7 @@ export class Track {
     this.width = new Float32Array(S).fill(BASE_WIDTH); // road half-width per sample
     this.height = new Float32Array(S); // final road elevation
     this.baseHeight = new Float32Array(S); // rolling terrain under the road (no bridges/jumps)
+    this.slope = new Float32Array(S); // banking: road rise per metre to the right (tan of bank angle)
     this.checkpointIdx = new Int32Array(CHECKPOINTS);
     for (let k = 0; k < CHECKPOINTS; k++) this.checkpointIdx[k] = Math.round((k * S) / CHECKPOINTS);
     this.checkpointCount = CHECKPOINTS;
@@ -604,6 +605,31 @@ export class Track {
       for (let j = 0; j <= n; j++) this.height[circ(jp.a + j)] += jumpH * Math.pow(j / n, 1.3);
     }
 
+    // Banking: tilt corners towards their inside, proportional to curvature. Flat on the start,
+    // bridges, tunnels, jumps and where another road passes underneath an overpass.
+    const bankMask = new Float32Array(S).fill(1);
+    const flat = (a, b) => { for (let i = a; i <= b; i++) bankMask[circ(i)] = 0; };
+    flat(startA - 6, startB + 6);
+    for (const br of this.bridges) flat(br.a - 4, br.b + 4);
+    for (const tu of this.tunnels) flat(tu.a - 8, tu.b + 8);
+    for (const jp of this.jumps) flat(jp.a - 10, jp.b + 12);
+    for (const c of this.crossings) flat(c.lower - 36, c.lower + 36);
+    blurCircular(bankMask, 8, 2);
+    for (const tu of this.tunnels) for (let i = tu.a - 2; i <= tu.b + 2; i++) bankMask[circ(i)] = 0;
+    for (const br of this.bridges) for (let i = br.a; i <= br.b; i++) bankMask[circ(i)] = 0;
+    const bankFactor = (t.id === 'rainbow' ? 1.3 : 0.7) + rand() * 0.5;
+    const maxBank = t.id === 'rainbow' ? 0.4 : 0.32; // tan of ~22° / ~18°
+    for (let i = 0; i < S; i++) {
+      const curv = wrap(this.yaw[circ(i + 3)] - this.yaw[circ(i - 3)]) / (6 * seg); // rad per metre, + = left turn
+      this.slope[i] = Math.max(-maxBank, Math.min(maxBank, curv * 9 * bankFactor));
+    }
+    blurCircular(this.slope, 5, 2);
+    for (let i = 0; i < S; i++) {
+      this.slope[i] *= bankMask[i];
+      // Lift banked corners so the low (inner) edge never dips below the ground.
+      this.height[i] += Math.abs(this.slope[i]) * (this.width[i] + CURB_WIDTH + BARRIER_GAP + 0.7);
+    }
+
     // Boost pads: random ones plus one lined up before every jump.
     const padLen = Math.max(3, Math.round(6 / seg));
     for (const jp of this.jumps) {
@@ -668,6 +694,22 @@ export class Track {
       if (Math.abs(lat - p.lat) <= p.half + 0.4 && this._inRange(idx, p.a, p.b)) return true;
     }
     return false;
+  }
+
+  /** Road surface height at a sample and lateral offset (includes banking). */
+  roadY(idx, lat) {
+    const i = circ(idx);
+    return this.height[i] + this.slope[i] * lat;
+  }
+
+  /** Banking at a sample: height gain per metre to the right. */
+  slopeAt(idx) {
+    return this.slope[circ(idx)];
+  }
+
+  /** Grade along the track at a sample: height gain per metre forward. */
+  gradeAt(idx) {
+    return (this.height[circ(idx + 1)] - this.height[circ(idx - 1)]) / (2 * this.segmentLength);
   }
 
   heightAt(idx) {
@@ -776,19 +818,21 @@ export class Track {
     const hAt = (i) => H[circ(i)];
     const W = (i) => this.width[circ(i)];
     // Band between lateral offsets computed per end from the local half-width.
+    const RY = (i, lat) => this.roadY(i, lat);
     const band = (i, fLo, fHi, yOff, hex) => {
       const w0 = W(i), w1 = W(i + 1);
-      const y0 = hAt(i) + yOff, y1 = hAt(i + 1) + yOff;
-      this.pointAt(i, fHi(w0), 0, a);
-      this.pointAt(i + 1, fHi(w1), 0, b);
-      this.pointAt(i + 1, fLo(w1), 0, c);
-      this.pointAt(i, fLo(w0), 0, d);
-      rb.quad(a.x, y0, a.z, b.x, y1, b.z, c.x, y1, c.z, d.x, y0, d.z, hex);
+      const hi0 = fHi(w0), hi1 = fHi(w1), lo0 = fLo(w0), lo1 = fLo(w1);
+      this.pointAt(i, hi0, 0, a);
+      this.pointAt(i + 1, hi1, 0, b);
+      this.pointAt(i + 1, lo1, 0, c);
+      this.pointAt(i, lo0, 0, d);
+      rb.quad(a.x, RY(i, hi0) + yOff, a.z, b.x, RY(i + 1, hi1) + yOff, b.z, c.x, RY(i + 1, lo1) + yOff, c.z, d.x, RY(i, lo0) + yOff, d.z, hex);
     };
     const skirt = (i, fLat, bottom0, bottom1, hex) => {
-      const y0 = hAt(i), y1 = hAt(i + 1);
-      this.pointAt(i, fLat(W(i)), 0, a);
-      this.pointAt(i + 1, fLat(W(i + 1)), 0, b);
+      const l0 = fLat(W(i)), l1 = fLat(W(i + 1));
+      const y0 = RY(i, l0), y1 = RY(i + 1, l1);
+      this.pointAt(i, l0, 0, a);
+      this.pointAt(i + 1, l1, 0, b);
       rb.quad(a.x, y0, a.z, b.x, y1, b.z, b.x, Math.min(bottom1, y1), b.z, a.x, Math.min(bottom0, y0), a.z, hex);
     };
     const edge = (w) => w + CURB_WIDTH + BARRIER_GAP + 0.7;
@@ -810,7 +854,9 @@ export class Track {
 
       // Shoulders out to the railings, and side walls wherever the road is raised.
       const deck = this._deckAt(i);
-      const raised = hAt(i) - this.baseHeight[i] > 0.02 || hAt(i + 1) - this.baseHeight[circ(i + 1)] > 0.02;
+      // Raised if either edge sits above the terrain (bridges, jumps, banked corners).
+      const e0 = edge(W(i));
+      const raised = Math.max(RY(i, e0), RY(i, -e0)) - this.baseHeight[i] > 0.05 || hAt(i + 1) - this.baseHeight[circ(i + 1)] > 0.02;
       const shoulder = raised ? 0x9aa0a8 : R.shoulder;
       band(i, (w) => w + CURB_WIDTH, edge, 0.045, shoulder);
       band(i, (w) => -edge(w), (w) => -w - CURB_WIDTH, 0.045, shoulder);
@@ -843,7 +889,7 @@ export class Track {
       const n = p.b - p.a;
       for (let k = 0; k < n; k += 2) {
         const i = p.a + k;
-        const y = hAt(i) + 0.1;
+        const y = RY(i, p.lat) + 0.1;
         const L = this.segmentLength * 1.6;
         const tip = { x: 0, z: 0 }, l0 = { x: 0, z: 0 }, l1 = { x: 0, z: 0 }, t1 = { x: 0, z: 0 };
         for (const sgn of [-1, 1]) {
@@ -885,11 +931,10 @@ export class Track {
     const p = { x: 0, z: 0 };
     for (let i = 0; i < S; i++) {
       const e = this.barrierOffset(i) + 0.7;
-      const y = this.height[i];
       this.pointAt(i, -e, 0, p);
-      verts[i * 6] = p.x; verts[i * 6 + 1] = y; verts[i * 6 + 2] = p.z;
+      verts[i * 6] = p.x; verts[i * 6 + 1] = this.roadY(i, -e); verts[i * 6 + 2] = p.z;
       this.pointAt(i, e, 0, p);
-      verts[i * 6 + 3] = p.x; verts[i * 6 + 4] = y; verts[i * 6 + 5] = p.z;
+      verts[i * 6 + 3] = p.x; verts[i * 6 + 4] = this.roadY(i, e); verts[i * 6 + 5] = p.z;
       const n = (i + 1) % S;
       idx.set([i * 2, i * 2 + 1, n * 2, i * 2 + 1, n * 2 + 1, n * 2], i * 6);
     }
@@ -920,7 +965,7 @@ export class Track {
         const len = Math.hypot(dx, dz) + 0.35;
         const yaw = Math.atan2(dx, dz);
         const cx = (a.x + b.x) / 2, cz = (a.z + b.z) / 2;
-        const cy = (this.heightAt(i) + this.heightAt(i + BARRIER_STEP)) / 2 + height / 2;
+        const cy = (this.roadY(i, side * this.barrierOffset(i)) + this.roadY(i + BARRIER_STEP, side * this.barrierOffset(i + BARRIER_STEP))) / 2 + height / 2;
         q.setFromAxisAngle(up, yaw);
         m.compose(p.set(cx, cy, cz), q, s.set(thick, height, len));
         mesh.setMatrixAt(n, m);
@@ -977,12 +1022,13 @@ export class Track {
     const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();
     const s = new THREE.Vector3();
-    const up = new THREE.Vector3(0, 1, 0);
+    const e = new THREE.Euler(0, 0, 0, 'YXZ');
     const p = new THREE.Vector3();
     const palette = [0x2a9df4, 0xf4c20d, 0x2ec27e, 0x9b5de5];
     const c = new THREE.Color();
     archCps.forEach((idx, n) => {
-      q.setFromAxisAngle(up, this.yaw[idx]);
+      // Local +x is the road's left, so roll by -atan(slope) to match the bank.
+      q.setFromEuler(e.set(0, this.yaw[idx], -Math.atan(this.slope[idx])));
       m.compose(p.set(this.px[idx], this.height[idx], this.pz[idx]), q, s.set(this.barrierOffset(idx) / W, 1, 1));
       mesh.setMatrixAt(n, m);
       mesh.setColorAt(n, c.setHex(palette[n % palette.length]));
@@ -1241,7 +1287,7 @@ export class Track {
       const w = this.width[i];
       for (const f of [-0.66, -0.22, 0.22, 0.66]) {
         this.pointAt(i, f * w, 0, tmp);
-        spots.push({ x: tmp.x, z: tmp.z, y: this.heightAt(i) });
+        spots.push({ x: tmp.x, z: tmp.z, y: this.roadY(i, f * w) });
       }
     }
     return spots;
@@ -1264,7 +1310,7 @@ export class Track {
         const j = i + k * 2;
         const l = Math.max(-w, Math.min(w, lat + (rand() - 0.5) * 3));
         this.pointAt(j, l, 0, tmp);
-        spots.push({ x: tmp.x, z: tmp.z, y: this.heightAt(j) });
+        spots.push({ x: tmp.x, z: tmp.z, y: this.roadY(j, l) });
       }
     }
     return spots;
