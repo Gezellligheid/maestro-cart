@@ -1,0 +1,77 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Rubik", ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer components {
+  .panel {
+    @apply rounded-3xl border border-white/10 bg-[#0f1630]/80 shadow-2xl backdrop-blur-md;
+  }
+
+  .title {
+    @apply font-black italic uppercase tracking-tight;
+    text-shadow: 0 3px 0 rgb(0 0 0 / 0.45), 0 0 24px rgb(0 0 0 / 0.25);
+  }
+
+  .field {
+    @apply w-full rounded-xl border border-white/15 bg-black/30 px-4 py-3 font-bold text-white outline-none transition placeholder:text-white/30 focus:border-amber-300 focus:ring-2 focus:ring-amber-300/30;
+  }
+
+  .btn {
+    @apply inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl px-5 py-3 font-extrabold uppercase tracking-wide transition active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn svg {
+    @apply h-5 w-5;
+  }
+  .btn-primary {
+    @apply bg-amber-300 text-[#1b1400] shadow-[0_4px_0_#b7791f] hover:bg-amber-200;
+  }
+  .btn-secondary {
+    @apply bg-sky-500 text-white shadow-[0_4px_0_#075985] hover:bg-sky-400;
+  }
+  .btn-ghost {
+    @apply bg-white/10 text-white hover:bg-white/20;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-2 rounded-full bg-black/45 px-4 py-1.5 text-sm font-extrabold tracking-wide backdrop-blur-sm;
+  }
+
+  .item-slot {
+    @apply grid h-20 w-20 place-items-center rounded-2xl border-4 border-white/80 bg-black/40 shadow-lg backdrop-blur-sm sm:h-24 sm:w-24;
+  }
+  .item-slot svg {
+    @apply h-14 w-14 sm:h-16 sm:w-16;
+  }
+  .item-slot.rolling svg {
+    animation: item-pop 0.12s ease-out;
+  }
+
+  .coin {
+    @apply inline-block h-4 w-4 rounded-full border-2 border-amber-600 bg-amber-300;
+  }
+
+  kbd {
+    @apply mr-1 inline-block rounded-md border border-white/20 bg-white/10 px-1.5 py-0.5 font-mono text-[10px] font-bold text-white/80;
+  }
+}
+
+@keyframes item-pop {
+  from { transform: scale(0.7); }
+  to { transform: scale(1); }
+}
+
+@keyframes center-pop {
+  0% { transform: scale(1.8); opacity: 0; }
+  30% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.pop {
+  animation: center-pop 0.9s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+}
+
+#hud-center {
+  -webkit-text-stroke: 3px rgb(0 0 0 / 0.35);
+}
