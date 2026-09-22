@@ -150,6 +150,9 @@ export class Audio {
       item: { type: 'square', f0: 330, f1: 660, dur: 0.1, vol: 0.1 },
       mega: { type: 'sawtooth', f0: 110, f1: 440, dur: 0.9, vol: 0.18 },
       bump: { type: 'triangle', f0: 160, f1: 60, dur: 0.18, vol: 0.3 },
+      zap: { type: 'sawtooth', f0: 1800, f1: 70, dur: 0.6, vol: 0.2 },
+      shield: { type: 'sine', f0: 400, f1: 900, dur: 0.35, vol: 0.2 },
+      magnet: { type: 'square', f0: 220, f1: 330, dur: 0.3, vol: 0.1 },
     };
     const p = presets[kind] || presets.item;
     osc.type = p.type;

@@ -29,8 +29,12 @@ public broker handles signalling only; gameplay traffic is direct WebRTC.
 - **Ready-up**: in a room every player marks Ready in the lobby and again between rounds; the
   race starts when everyone is ready (the host can also skip the wait).
 - **Style parts** are previewed on the showroom kart when clicked and only bought via the Buy button.
-- **Items**: green shell, banana, mushroom and the rare Mega Mushroom (3× size for 10 s: immune to
-  items, squashes karts it touches).
+- **Items** (odds depend on your position: leaders get defensive items, the back gets catch-up items):
+  green shell (bounces), banana, mushroom, **red shell** (homes in on the kart one place ahead,
+  breaks on walls), **bubble shield** (absorbs the next hit), **coin magnet** (pulls in coins and item
+  boxes for 8 s), **lightning bolt** (back half only: shrinks every other kart for 6 s and knocks their
+  item away — shrunk karts get squashed by full-size ones) and the rare **Mega Mushroom** (3× size for
+  10 s: immune to items, squashes karts it touches).
 - **Audio**: `sound_effects/` holds the countdown, item-roulette, race-end jingle and three music
   tracks (one per circuit). Settings (gear button or Esc) has master/music/effects volume; M mutes.
 

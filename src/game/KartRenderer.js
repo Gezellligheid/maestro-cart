@@ -61,6 +61,15 @@ export class KartRenderer {
     }
     renderer.scene.add(this.batch);
 
+    // Bubble shields: one transparent instanced sphere per shielded kart (1 draw call).
+    const bubbleMat = renderer.basic({ color: 0x7fdcff, transparent: true, opacity: 0.28, depthWrite: false });
+    this.bubbles = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 2), bubbleMat, MAX_RENDERED);
+    this.bubbles.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.bubbles.frustumCulled = false;
+    this.bubbles.renderOrder = 2;
+    this.bubbles.count = 0;
+    renderer.scene.add(this.bubbles);
+
     this._kartMat = new THREE.Matrix4();
     this._local = new THREE.Matrix4();
     this._out = new THREE.Matrix4();
@@ -99,6 +108,7 @@ export class KartRenderer {
     const emitSparks = this._sparkTimer > 1 / 45;
     if (emitSparks) this._sparkTimer = 0;
     const count = Math.min(karts.length, MAX_RENDERED);
+    let bubbleCount = 0;
 
     for (let i = 0; i < count; i++) {
       const k = karts[i];
@@ -153,11 +163,24 @@ export class KartRenderer {
         this._setPart(base + 3 + w, wheelGeo, this._out, WHITE);
       }
 
+      if (k.shieldTimer > 0) {
+        const r = 1.9 * scale * (1 + Math.sin(performance.now() * 0.006 + i) * 0.03);
+        this._local.compose(this._p.set(x, y + 0.85 * scale, z), this._q.identity(), this._s.set(r, r, r));
+        this.bubbles.setMatrixAt(bubbleCount++, this._local);
+      }
+      if (k.shieldPopped) {
+        k.shieldPopped = false;
+        this.particles.burst(x, y + 1, z, 18, 8, 0.45, 0.3, 0x7fdcff, -6);
+      }
+
       if (!k.preview) {
         shadows.add(x, k.track.heightAt(k.trackIdx), z, 2.6 * scale);
         if (emitSparks) this._emitEffects(k, x, y, z, visualYaw, scale);
       }
     }
+
+    this.bubbles.count = bubbleCount;
+    if (bubbleCount > 0) this.bubbles.instanceMatrix.needsUpdate = true;
 
     // Hide instances of karts that are no longer rendered.
     for (let i = count; i < this._lastCount; i++) {
@@ -196,6 +219,14 @@ export class KartRenderer {
     if (k.megaTimer > 0) {
       const a = Math.random() * Math.PI * 2;
       p.spawn(x + Math.cos(a) * 1.6 * scale, y + Math.random() * 2 * scale, z + Math.sin(a) * 1.6 * scale, 0, 2.5, 0, 0.5, 0.35, Math.random() < 0.5 ? 0xffd23f : 0xff595e, 0);
+    }
+    if (k.magnetTimer > 0) {
+      // Blue sparks drawn in toward the kart.
+      const a = Math.random() * Math.PI * 2, d = 4 + Math.random() * 4;
+      p.spawn(x + Math.cos(a) * d, y + 0.8, z + Math.sin(a) * d, -Math.cos(a) * d * 2.2, 0, -Math.sin(a) * d * 2.2, 0.45, 0.22, 0x5ab4ff, 0);
+    }
+    if (k.shrinkTimer > 0 && Math.random() < 0.3) {
+      p.spawn(x, y + 1.2 * scale, z, (Math.random() - 0.5) * 2, 1.5, (Math.random() - 0.5) * 2, 0.4, 0.2, 0xfff176, -2);
     }
     if (k.offroad && Math.abs(k.speed) > 6 && k.grounded) {
       p.spawn(backX, y + 0.2, backZ, (Math.random() - 0.5) * 3, 1.5 + Math.random() * 2, (Math.random() - 0.5) * 3, 0.45, 0.35, 0x8d6e4a, -9);

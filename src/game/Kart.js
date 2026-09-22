@@ -1,4 +1,4 @@
-import { KART, DRIFT_TIERS, ITEM, TOTAL_LAPS } from './constants.js';
+import { KART, DRIFT_TIERS, ITEM, ITEMS, TOTAL_LAPS } from './constants.js';
 import { baseMods, MEGA } from './Upgrades.js';
 import { DEFAULT_LOOK } from './Cosmetics.js';
 
@@ -49,7 +49,11 @@ export class Kart {
     this.collider = this.body.collider(0);
     this.radius = KART.radius;
     this.megaTimer = 0; // Mega: triple size for a few seconds
-    this.megaScale = 1;
+    this.megaScale = 1; // current size multiplier (Mega grows, Lightning shrinks)
+    this.shrinkTimer = 0;
+    this.shieldTimer = 0;
+    this.shieldPopped = false; // one-frame flag for the pop effect
+    this.magnetTimer = 0;
     this.megaRemote = false;
     this.steerInput = 0; // smoothed steering
     this.bumpX = 0; this.bumpZ = 0; // knock-back velocity from kart collisions
@@ -136,7 +140,10 @@ export class Kart {
     const t = this.body.translation();
 
     if (this.megaTimer > 0) this.megaTimer -= dt;
-    this._updateMegaScale(dt, this.megaTimer > 0);
+    if (this.shrinkTimer > 0) this.shrinkTimer -= dt;
+    if (this.shieldTimer > 0) this.shieldTimer -= dt;
+    if (this.magnetTimer > 0) this.magnetTimer -= dt;
+    this._updateScale(dt);
 
     const gd = this.physics.groundDistance(t.x, t.y, t.z, this.radius + 0.3);
     this.grounded = gd >= 0 && v.y < 3;
@@ -164,6 +171,7 @@ export class Kart {
       this.boostTimer -= dt;
     }
     if (this.megaTimer > 0) maxSpeed *= 1.12;
+    else if (this.shrinkTimer > 0) maxSpeed *= ITEMS.shrinkSpeed;
 
     let throttle = this.controlsEnabled ? input.throttle : 0;
     let steer = this.controlsEnabled ? input.steer : 0;
@@ -321,6 +329,12 @@ export class Kart {
 
   spinOut() {
     if (this.spinTimer > 0 || this.megaTimer > 0) return false;
+    if (this.shieldTimer > 0) {
+      // The bubble absorbs the hit.
+      this.shieldTimer = 0;
+      this.shieldPopped = true;
+      return false;
+    }
     this.spinTimer = KART.spinDuration;
     this.boostTimer = 0;
     this._cancelDrift();
@@ -339,12 +353,51 @@ export class Kart {
   activateMega() {
     if (this.megaTimer > 0) return false;
     this.megaTimer = MEGA.duration;
+    this.shrinkTimer = 0;
     return true;
   }
 
-  /** Smoothly grow/shrink and resize the physics ball to match. */
-  _updateMegaScale(dt, on) {
-    const target = on ? MEGA.scale : 1;
+  /** Lightning strike from another kart. Returns true if it took effect. */
+  zap() {
+    if (this.megaTimer > 0) return false;
+    if (this.shieldTimer > 0) {
+      this.shieldTimer = 0;
+      this.shieldPopped = true;
+      return false;
+    }
+    this.shrinkTimer = ITEMS.shrinkDuration;
+    this.item = ITEM.NONE; // the bolt knocks your held item away
+    this.rollTimer = 0;
+    this.pendingItem = ITEM.NONE;
+    this.boostTimer = 0;
+    this._cancelDrift();
+    return true;
+  }
+
+  activateShield() {
+    this.shieldTimer = ITEMS.shieldDuration;
+  }
+
+  activateMagnet() {
+    this.magnetTimer = ITEMS.magnetDuration;
+  }
+
+  /** Bits sent alongside the drift tier: 1 = shrunk, 2 = shield, 4 = magnet. */
+  get extraBits() {
+    return (this.shrinkTimer > 0 ? 1 : 0) | (this.shieldTimer > 0 ? 2 : 0) | (this.magnetTimer > 0 ? 4 : 0);
+  }
+
+  applyRemoteExtras(bits) {
+    this.shrinkTimer = bits & 1 ? 1 : 0;
+    const shield = (bits & 2) !== 0;
+    if (!shield && this.shieldTimer > 0) this.shieldPopped = true;
+    this.shieldTimer = shield ? 1 : 0;
+    this.magnetTimer = bits & 4 ? 1 : 0;
+  }
+
+  /** Smoothly grow/shrink (Mega / Lightning) and resize the physics ball to match. */
+  _updateScale(dt) {
+    const target = this.megaTimer > 0 ? MEGA.scale : this.shrinkTimer > 0 ? ITEMS.shrinkScale : 1;
     this.megaScale += (target - this.megaScale) * Math.min(1, dt * 3);
     if (Math.abs(target - this.megaScale) < 0.01) this.megaScale = target;
     const r = KART.radius * this.megaScale;
@@ -408,7 +461,7 @@ export class Kart {
 
   /** Advance remote-only visual state each frame. */
   updateRemoteVisuals(dt) {
-    this._updateMegaScale(dt, this.megaRemote);
+    this._updateScale(dt);
     const driftTarget = this.drifting ? -this.driftDir * 0.26 : 0;
     this.driftVisual += (driftTarget - this.driftVisual) * Math.min(1, dt * 8);
     this.wheelSpin += this.speed * dt / 0.3;

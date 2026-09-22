@@ -27,7 +27,7 @@ import {
 
 const COUNTDOWN_MS = 3600;
 const RACE_TIMEOUT_AFTER_FIRST_MS = 30000; // stragglers get a DNF this long after the first human finishes
-const ITEM_EVENTS = new Set(['box', 'coin', 'spawn', 'hit', 'despawn']);
+const ITEM_EVENTS = new Set(['box', 'coin', 'spawn', 'hit', 'despawn', 'zap']);
 const randomSeed = () => (Math.random() * 0xffffffff) >>> 0;
 const SHOWROOM = { x: 0, y: 400, z: 0 }; // garage podium floats high above the map
 
@@ -122,6 +122,15 @@ class Game {
   _wireItems() {
     const items = this.items;
     items.getKart = (slot) => this.kartBySlot[slot];
+    items.getKarts = () => this.karts;
+    items.onZap = (slot) => {
+      this.audio.blip('zap');
+      const lk = this.localKart;
+      if (lk && lk.slot !== slot) {
+        this.renderer.addShake(0.7);
+        this.hud.flash(lk.shrinkTimer > 0 ? 'ZAPPED!' : 'BLOCKED!', 1.1, '#ffd23f');
+      }
+    };
     items.onEvent = (msg) => { if (this.mode === 'host') this.net.broadcast(msg); };
     items.onRequest = (msg) => this.net.send(msg);
     items.onLocalHit = (k) => {
@@ -575,7 +584,8 @@ class Game {
       this.interp[rec.slot].push(rec, now);
       k.netX = rec.x;
       k.netZ = rec.z;
-      k.applyRemoteFlags(rec.flags, rec.driftTier, rec.steer);
+      k.applyRemoteFlags(rec.flags, rec.driftTier & 15, rec.steer);
+      k.applyRemoteExtras(rec.driftTier >> 4);
       k.item = rec.item;
       k.rollTimer = rec.flags & FLAG.ROLLING ? 0.1 : 0;
       k.progress = rec.progress;
@@ -684,7 +694,7 @@ class Game {
     } else {
       this.kartRenderer.update(this.karts, this.physics.alpha, dt);
     }
-    this.items.render(time);
+    this.items.render(time, this.karts);
 
     const lk = this.localKart;
     if (this.garageUI.visible) {
@@ -778,6 +788,12 @@ class Game {
     const boost = k.boostTimer > 0;
     if (boost && !s.boost) this.audio.blip('boost');
     s.boost = boost;
+    const shield = k.shieldTimer > 0;
+    if (shield && !s.shield) this.audio.blip('shield');
+    s.shield = shield;
+    const magnet = k.magnetTimer > 0;
+    if (magnet && !s.magnet) this.audio.blip('magnet');
+    s.magnet = magnet;
     const mega = k.megaTimer > 0;
     if (mega && !s.mega) {
       this.audio.blip('mega');

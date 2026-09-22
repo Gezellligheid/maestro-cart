@@ -12,8 +12,10 @@ export const INTERP_DELAY_MS = 100;
 export const MAX_EXTRAPOLATE_MS = 250;
 export const ROOM_PREFIX = 'mkbros-v1-';
 
-export const ITEM = Object.freeze({ NONE: 0, SHELL: 1, BANANA: 2, MUSHROOM: 3, MEGA: 4 });
-export const ITEM_NAMES = ['', 'Green Shell', 'Banana', 'Mushroom', 'Mega Mushroom'];
+export const ITEM = Object.freeze({
+  NONE: 0, SHELL: 1, BANANA: 2, MUSHROOM: 3, MEGA: 4, RED_SHELL: 5, LIGHTNING: 6, SHIELD: 7, MAGNET: 8,
+});
+export const ITEM_NAMES = ['', 'Green Shell', 'Banana', 'Mushroom', 'Mega Mushroom', 'Red Shell', 'Lightning Bolt', 'Bubble Shield', 'Coin Magnet'];
 
 export const COLLISION = Object.freeze({ WALL: 0x0001, GROUND: 0x0002, KART: 0x0004 });
 
@@ -87,4 +89,15 @@ export const ITEMS = Object.freeze({
   shellOwnerGrace: 0.35,
   bananaRadius: 0.6,
   coinRespawn: 8,
+  redShellSpeed: 52,
+  redShellLife: 12,
+  redShellTurnRate: 4.5, // rad/s the homing shell can turn
+  redShellLockRange: 45, // metres: closer than this it chases the target directly
+  shrinkDuration: 6,
+  shrinkScale: 0.55,
+  shrinkSpeed: 0.72, // top-speed factor while shrunk
+  shieldDuration: 15,
+  magnetDuration: 8,
+  magnetCoinRange: 12,
+  magnetBoxRange: 5,
 });

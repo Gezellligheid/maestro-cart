@@ -5,7 +5,7 @@ import { MAX_KARTS } from '../game/constants.js';
  *
  * Header (4 bytes): u8 type, u8 count, u16 sequence
  * Record (44 bytes, little endian):
- *   0 u8 slot | 1 u8 flags | 2 u8 driftTier | 3 u8 item
+ *   0 u8 slot | 1 u8 flags | 2 u8 driftTier (low nibble) + shrink/shield/magnet bits | 3 u8 item
  *   4 u32 sender time (ms)
  *   8 f32 x | 12 f32 y | 16 f32 z | 20 f32 yaw
  *  24 f32 vx | 28 f32 vy | 32 f32 vz | 36 f32 progress
@@ -38,7 +38,8 @@ export class KartRecord {
   }
 
   fromKart(k, time) {
-    this.slot = k.slot; this.flags = k.flags; this.driftTier = k.driftTier;
+    // Upper nibble of the drift-tier byte carries shrink / shield / magnet state.
+    this.slot = k.slot; this.flags = k.flags; this.driftTier = k.driftTier | (k.extraBits << 4);
     this.item = k.rollTimer > 0 ? 0 : k.item;
     this.time = time;
     this.x = k.x; this.y = k.y; this.z = k.z; this.yaw = k.yaw;

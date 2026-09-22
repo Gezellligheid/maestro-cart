@@ -3,6 +3,7 @@ import { box, cylinder, sphere, merge } from '../engine/geometry.js';
 import { ITEM, ITEMS, KART } from './constants.js';
 
 const SHELL_CAP = 24;
+const RED_CAP = 16;
 const BANANA_CAP = 32;
 const BOX_SIZE = 1.5;
 const RAINBOW = [0xff595e, 0xffca3a, 0x8ac926, 0x1982c4, 0x6a4c93, 0xff924c];
@@ -15,6 +16,7 @@ class Projectile {
     this.id = 0;
     this.owner = -1;
     this.idx = -1; // nearest track sample, for ground height
+    this.target = -1; // red shells: slot being chased
     this.x = 0; this.y = 0; this.z = 0;
     this.vx = 0; this.vz = 0;
     this.age = 0;
@@ -79,6 +81,9 @@ export class ItemSystem {
     this.boxes = track.itemBoxSpots.map((s) => ({ x: s.x, y: s.y, z: s.z, active: true, timer: 0, scale: 1 }));
     this.coins = track.coinSpots.map((s) => ({ x: s.x, y: s.y, z: s.z, active: true, timer: 0 }));
     this.shells = new ProjectilePool(ITEM.SHELL, SHELL_CAP);
+    this.reds = new ProjectilePool(ITEM.RED_SHELL, RED_CAP);
+    this.getKarts = () => []; // all karts, for lightning and red-shell targeting
+    this.onZap = null; // (userSlot) => void, presentation hook
     this.bananas = new ProjectilePool(ITEM.BANANA, BANANA_CAP);
 
     this._buildMeshes();
@@ -129,6 +134,14 @@ export class ItemSystem {
       box(0.22, 0.1, 0.22, -0.3, 0.42, -0.2, 0xf5f5dc),
     ]);
     this.shellMesh = this._instanced(shellGeo, toon, SHELL_CAP);
+    const redGeo = merge([
+      sphere(0.55, 10, 6, 0, 0.12, 0, 0xe63946, 1, 0.75, 1),
+      cylinder(0.6, 0.6, 0.18, 12, 0, 0, 0, 0xffffff),
+      box(0.25, 0.1, 0.25, 0, 0.55, 0, 0xffe0e0),
+      box(0.22, 0.1, 0.22, 0.3, 0.42, 0.2, 0xffe0e0),
+      box(0.22, 0.1, 0.22, -0.3, 0.42, -0.2, 0xffe0e0),
+    ]);
+    this.redMesh = this._instanced(redGeo, toon, RED_CAP);
 
     const bananaGeo = merge([
       cylinder(0.16, 0.2, 0.55, 7, 0, 0.3, -0.2, 0xffe135, 0.7, 0, 0),
@@ -158,6 +171,7 @@ export class ItemSystem {
     for (const b of this.boxes) { b.active = true; b.timer = 0; b.scale = 1; }
     for (const c of this.coins) { c.active = true; c.timer = 0; }
     this.shells.releaseAll();
+    this.reds.releaseAll();
     this.bananas.releaseAll();
     this.nextId = 1;
   }
@@ -177,6 +191,18 @@ export class ItemSystem {
       kart.activateMega();
       return true;
     }
+    if (it === ITEM.SHIELD) {
+      kart.activateShield();
+      return true;
+    }
+    if (it === ITEM.MAGNET) {
+      kart.activateMagnet();
+      return true;
+    }
+    if (it === ITEM.LIGHTNING && this.isAuthority) {
+      this._emit({ t: 'zap', s: kart.slot });
+      return true;
+    }
     if (this.isAuthority) {
       this.spawnFromKart(it, kart.slot, kart.x, kart.z, kart.yaw, kart.speed);
     } else if (this.onRequest) {
@@ -188,17 +214,28 @@ export class ItemSystem {
   /** Authority: handle an item-use request from a client. */
   handleRequest(msg, fromSlot) {
     if (!this.isAuthority || msg.t !== 'use' || msg.s !== fromSlot) return;
-    if (msg.k !== ITEM.SHELL && msg.k !== ITEM.BANANA) return;
+    if (msg.k === ITEM.LIGHTNING) {
+      this._emit({ t: 'zap', s: fromSlot });
+      return;
+    }
+    if (msg.k !== ITEM.SHELL && msg.k !== ITEM.BANANA && msg.k !== ITEM.RED_SHELL) return;
     this.spawnFromKart(msg.k, fromSlot, +msg.x || 0, +msg.z || 0, +msg.yaw || 0, +msg.spd || 0);
   }
 
   spawnFromKart(type, owner, x, z, yaw, speed) {
     const sin = Math.sin(yaw), cos = Math.cos(yaw);
     let px, pz, vx = 0, vz = 0;
-    if (type === ITEM.SHELL) {
+    let target = -1;
+    if (type === ITEM.RED_SHELL) {
+      // Chase whoever is one place ahead of the thrower.
+      const me = this.getKart(owner);
+      const ahead = me && this.getKarts().find((k) => k.rank === me.rank - 1 && !k.finished);
+      target = ahead ? ahead.slot : -1;
+    }
+    if (type === ITEM.SHELL || type === ITEM.RED_SHELL) {
       px = x + sin * 2.4;
       pz = z + cos * 2.4;
-      const v = Math.max(ITEMS.shellSpeed, speed + 20);
+      const v = type === ITEM.RED_SHELL ? Math.max(ITEMS.redShellSpeed, speed + 14) : Math.max(ITEMS.shellSpeed, speed + 20);
       vx = sin * v;
       vz = cos * v;
       // Don't spawn inside a barrier when hugging a wall.
@@ -210,7 +247,7 @@ export class ItemSystem {
     }
     const id = this.nextId;
     this.nextId = this.nextId >= 60000 ? 1 : this.nextId + 1;
-    this._emit({ t: 'spawn', k: type, id, o: owner, x: px, z: pz, vx, vz });
+    this._emit({ t: 'spawn', k: type, id, o: owner, x: px, z: pz, vx, vz, tg: target });
   }
 
   // ---------------------------------------------------------------- events
@@ -245,35 +282,49 @@ export class ItemSystem {
         break;
       }
       case 'spawn': {
-        const pool = msg.k === ITEM.SHELL ? this.shells : this.bananas;
+        const pool = msg.k === ITEM.SHELL ? this.shells : msg.k === ITEM.RED_SHELL ? this.reds : this.bananas;
         const p = pool.acquire();
         p.active = true;
         p.id = msg.id;
         p.owner = msg.o;
         p.x = msg.x; p.z = msg.z;
         p.idx = this.track.nearestIndex(p.x, p.z, -1);
-        p.y = this.track.heightAt(p.idx) + (msg.k === ITEM.SHELL ? 0.5 : 0.05);
+        p.y = this.track.heightAt(p.idx) + (msg.k === ITEM.BANANA ? 0.05 : 0.5);
+        p.target = Number.isInteger(msg.tg) ? msg.tg : -1;
         p.vx = msg.vx; p.vz = msg.vz;
         p.age = 0;
         p.bounces = 0;
         break;
       }
       case 'hit': {
-        const p = this.shells.findById(msg.id) || this.bananas.findById(msg.id);
+        const p = this._find(msg.id);
         if (p) {
           p.active = false;
-          this.particles.burst(p.x, 0.8, p.z, 14, 7, 0.6, 0.3, p.type === ITEM.SHELL ? 0x2ec27e : 0xffe135, -12);
+          const col = p.type === ITEM.SHELL ? 0x2ec27e : p.type === ITEM.RED_SHELL ? 0xe63946 : 0xffe135;
+          this.particles.burst(p.x, p.y + 0.3, p.z, 14, 7, 0.6, 0.3, col, -12);
         }
         const k = this.getKart(msg.s);
         if (k && k.simulated && k.spinOut() && this.onLocalHit) this.onLocalHit(k);
         break;
       }
       case 'despawn': {
-        const p = this.shells.findById(msg.id) || this.bananas.findById(msg.id);
+        const p = this._find(msg.id);
         if (p) {
           p.active = false;
-          this.particles.burst(p.x, 0.6, p.z, 8, 5, 0.4, 0.25, 0xffffff, -10);
+          this.particles.burst(p.x, p.y + 0.1, p.z, 8, 5, 0.4, 0.25, 0xffffff, -10);
         }
+        break;
+      }
+      case 'zap': {
+        // Lightning: every other kart shrinks. Each peer applies it to the karts it simulates.
+        const karts = this.getKarts();
+        for (let i = 0; i < karts.length; i++) {
+          const k = karts[i];
+          if (k.slot === msg.s) continue;
+          this.particles.burst(k.x, k.y + 2.5, k.z, 10, 6, 0.5, 0.35, 0xfff176, -18);
+          if (k.simulated) k.zap();
+        }
+        if (this.onZap) this.onZap(msg.s);
         break;
       }
       default:
@@ -283,17 +334,31 @@ export class ItemSystem {
 
   // ---------------------------------------------------------------- simulation
 
+  _find(id) {
+    return this.shells.findById(id) || this.reds.findById(id) || this.bananas.findById(id);
+  }
+
+  /** Weighted item roll: leaders get defensive items, karts at the back get catch-up items. */
   _rollItem(kart, total) {
-    const t = total > 1 ? (kart.rank - 1) / (total - 1) : 0.5;
-    const wBanana = 0.5 - 0.4 * t;
-    const wShell = 0.4;
-    const wMush = 0.1 + 0.4 * t;
-    const wMega = 0.02 + 0.13 * t; // rare, mostly for karts at the back
-    const r = Math.random() * (wBanana + wShell + wMush + wMega);
-    if (r < wBanana) return ITEM.BANANA;
-    if (r < wBanana + wShell) return ITEM.SHELL;
-    if (r < wBanana + wShell + wMush) return ITEM.MUSHROOM;
-    return ITEM.MEGA;
+    const t = total > 1 ? (kart.rank - 1) / (total - 1) : 0.5; // 0 = leader, 1 = last
+    const table = [
+      [ITEM.BANANA, 0.5 - 0.4 * t],
+      [ITEM.SHELL, 0.35],
+      [ITEM.MUSHROOM, 0.1 + 0.35 * t],
+      [ITEM.SHIELD, 0.25 - 0.2 * t],
+      [ITEM.MAGNET, 0.1],
+      [ITEM.RED_SHELL, kart.rank > 1 ? 0.08 + 0.25 * t : 0], // nobody to chase from 1st
+      [ITEM.MEGA, 0.02 + 0.11 * t],
+      [ITEM.LIGHTNING, t > 0.5 ? 0.14 * (t - 0.5) * 2 : 0], // back half only
+    ];
+    let sum = 0;
+    for (const [, w] of table) sum += Math.max(0, w);
+    let r = Math.random() * sum;
+    for (const [it, w] of table) {
+      r -= Math.max(0, w);
+      if (r <= 0) return it;
+    }
+    return ITEM.BANANA;
   }
 
   fixedUpdate(dt, karts) {
@@ -315,6 +380,7 @@ export class ItemSystem {
     }
 
     this._updateShells(dt);
+    this._updateReds(dt);
     const bananas = this.bananas.items;
     for (let i = 0; i < bananas.length; i++) if (bananas[i].active) bananas[i].age += dt;
 
@@ -359,20 +425,75 @@ export class ItemSystem {
     }
   }
 
+  /**
+   * Red shells follow the racing line and home in on their target once close. They shatter on
+   * walls instead of bouncing. Every peer runs the same steering so they look consistent.
+   */
+  _updateReds(dt) {
+    const reds = this.reds.items;
+    const R = ITEMS.shellRadius;
+    const pt = this._pt || (this._pt = { x: 0, z: 0 });
+    for (let i = 0; i < reds.length; i++) {
+      const s = reds[i];
+      if (!s.active) continue;
+      s.age += dt;
+      s.spin += dt * 16;
+      if (s.age > ITEMS.redShellLife) { s.active = false; continue; }
+      s.idx = this.track.nearestIndex(s.x, s.z, s.idx);
+      s.y = this.track.heightAt(s.idx) + 0.5;
+
+      // Pick an aim point: the target when close, otherwise a point further along the track.
+      const tk = s.target >= 0 ? this.getKart(s.target) : null;
+      let ax, az;
+      const tdx = tk ? tk.netX - s.x : 0, tdz = tk ? tk.netZ - s.z : 0;
+      if (tk && !tk.finished && tdx * tdx + tdz * tdz < ITEMS.redShellLockRange ** 2) {
+        ax = tk.netX; az = tk.netZ;
+      } else {
+        this.track.pointAt(s.idx + 10, 0, 0, pt);
+        ax = pt.x; az = pt.z;
+      }
+      const speed = Math.hypot(s.vx, s.vz) || ITEMS.redShellSpeed;
+      const cur = Math.atan2(s.vx, s.vz);
+      const want = Math.atan2(ax - s.x, az - s.z);
+      let diff = Math.atan2(Math.sin(want - cur), Math.cos(want - cur));
+      const maxTurn = ITEMS.redShellTurnRate * dt;
+      diff = Math.max(-maxTurn, Math.min(maxTurn, diff));
+      const heading = cur + diff;
+      s.vx = Math.sin(heading) * speed;
+      s.vz = Math.cos(heading) * speed;
+
+      const dx = Math.sin(heading), dz = Math.cos(heading);
+      const hit = this.physics.castWall(s.x, s.y, s.z, dx, dz, speed * dt + R);
+      if (hit) {
+        s.active = false;
+        this.particles.burst(s.x, s.y, s.z, 10, 6, 0.4, 0.3, 0xe63946, -10);
+        continue;
+      }
+      s.x += s.vx * dt;
+      s.z += s.vz * dt;
+      if (Math.random() < 0.3) this.particles.spawn(s.x, s.y, s.z, 0, 0.6, 0, 0.3, 0.2, 0xff8a8a, 0);
+    }
+  }
+
   _authorityChecks(karts) {
     const total = karts.length;
     const boxR2 = (BOX_SIZE * 0.5 + KART.radius + 0.4) ** 2;
     const coinR2 = (0.6 + KART.radius + 0.3) ** 2;
+    const magnetCoinR2 = ITEMS.magnetCoinRange ** 2;
+    const magnetBoxR2 = (BOX_SIZE * 0.5 + KART.radius + ITEMS.magnetBoxRange) ** 2;
 
     for (let ki = 0; ki < karts.length; ki++) {
       const k = karts[ki];
       const kx = k.netX, kz = k.netZ;
+      const magnet = k.magnetTimer > 0;
+      const boxReach = magnet ? magnetBoxR2 : boxR2;
+      const coinReach = magnet ? magnetCoinR2 : coinR2;
 
       for (let i = 0; i < this.boxes.length; i++) {
         const b = this.boxes[i];
         if (!b.active) continue;
         const dx = kx - b.x, dz = kz - b.z;
-        if (dx * dx + dz * dz < boxR2) {
+        if (dx * dx + dz * dz < boxReach) {
           const it = k.hasItemSlotFree ? this._rollItem(k, total) : ITEM.NONE;
           this._emit({ t: 'box', i, s: k.slot, it });
         }
@@ -382,18 +503,24 @@ export class ItemSystem {
         const c = this.coins[i];
         if (!c.active) continue;
         const dx = kx - c.x, dz = kz - c.z;
-        if (dx * dx + dz * dz < coinR2) this._emit({ t: 'coin', i, s: k.slot });
+        if (dx * dx + dz * dz < coinReach) this._emit({ t: 'coin', i, s: k.slot });
       }
 
       if (k.spinTimer > 0 || k.finished) continue;
       if (k.megaTimer > 0) {
         // Mega karts smash projectiles and flatten anyone they touch.
         this._megaSmash(k, this.shells.items, ITEMS.shellRadius);
+        this._megaSmash(k, this.reds.items, ITEMS.shellRadius);
         this._megaSmash(k, this.bananas.items, ITEMS.bananaRadius);
         this._megaSquash(k, karts);
         continue;
       }
+      if (k.shrinkTimer > 0 && this._isSquashed(k, karts)) {
+        this._emit({ t: 'hit', s: k.slot, id: 0 });
+        continue;
+      }
       this._checkProjectileHits(k, this.shells.items, ITEMS.shellRadius, ITEMS.shellOwnerGrace);
+      this._checkProjectileHits(k, this.reds.items, ITEMS.shellRadius, ITEMS.shellOwnerGrace);
       this._checkProjectileHits(k, this.bananas.items, ITEMS.bananaRadius, 0.6);
     }
 
@@ -414,6 +541,18 @@ export class ItemSystem {
         }
       }
     }
+  }
+
+  /** A shrunk kart gets flattened by any full-size kart it touches. */
+  _isSquashed(k, karts) {
+    for (let j = 0; j < karts.length; j++) {
+      const o = karts[j];
+      if (o === k || o.shrinkTimer > 0) continue;
+      const reach = KART.radius * (k.megaScale + o.megaScale) + 0.3;
+      const dx = k.netX - o.netX, dz = k.netZ - o.netZ;
+      if (dx * dx + dz * dz < reach * reach) return true;
+    }
+    return false;
   }
 
   _megaSmash(k, list, radius) {
@@ -452,7 +591,7 @@ export class ItemSystem {
 
   // ---------------------------------------------------------------- rendering
 
-  render(time) {
+  render(time, karts = []) {
     const shadows = this.renderer.shadows;
     const m = this._m, q = this._q, e = this._e, p = this._p, s = this._s;
 
@@ -472,7 +611,22 @@ export class ItemSystem {
       const sc = c.active ? 1 : 0;
       e.set(0, time * 3 + i * 0.4, 0);
       q.setFromEuler(e);
-      m.compose(p.set(c.x, c.y + 0.9, c.z), q, s.set(sc, sc, sc));
+      // Coins near a magnet kart are drawn sliding toward it.
+      let cx = c.x, cz = c.z;
+      if (c.active) {
+        for (let k = 0; k < karts.length; k++) {
+          const kt = karts[k];
+          if (!(kt.magnetTimer > 0)) continue;
+          const dx = kt.renderX - c.x, dz = kt.renderZ - c.z;
+          const d = Math.hypot(dx, dz);
+          const range = ITEMS.magnetCoinRange * 1.6;
+          if (d < range) {
+            const f = Math.min(0.85, 1 - d / range);
+            cx += dx * f; cz += dz * f;
+          }
+        }
+      }
+      m.compose(p.set(cx, c.y + 0.9, cz), q, s.set(sc, sc, sc));
       this.coinMesh.setMatrixAt(i, m);
     }
     this.coinMesh.instanceMatrix.needsUpdate = true;
@@ -490,6 +644,20 @@ export class ItemSystem {
     }
     this.shellMesh.count = n;
     this.shellMesh.instanceMatrix.needsUpdate = true;
+
+    n = 0;
+    const reds = this.reds.items;
+    for (let i = 0; i < reds.length; i++) {
+      const sh = reds[i];
+      if (!sh.active) continue;
+      e.set(0, sh.spin, 0);
+      q.setFromEuler(e);
+      m.compose(p.set(sh.x, sh.y - 0.2, sh.z), q, s.set(1, 1, 1));
+      this.redMesh.setMatrixAt(n++, m);
+      shadows.add(sh.x, sh.y - 0.5, sh.z, 1.4);
+    }
+    this.redMesh.count = n;
+    this.redMesh.instanceMatrix.needsUpdate = true;
 
     n = 0;
     const bananas = this.bananas.items;

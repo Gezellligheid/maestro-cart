@@ -7,7 +7,11 @@ const ICONS = {
   [ITEM.MUSHROOM]: `<svg viewBox="0 0 64 64"><path d="M24 36h16v14a6 6 0 0 1-6 6h-4a6 6 0 0 1-6-6z" fill="#fde7c7" stroke="#6b4423" stroke-width="3"/><path d="M6 36C6 20 18 8 32 8s26 12 26 28z" fill="#e63946" stroke="#7a1017" stroke-width="3"/><circle cx="32" cy="20" r="6" fill="#fff"/><circle cx="16" cy="29" r="5" fill="#fff"/><circle cx="48" cy="29" r="5" fill="#fff"/><circle cx="28" cy="44" r="2" fill="#222"/><circle cx="36" cy="44" r="2" fill="#222"/></svg>`,
 };
 ICONS[ITEM.MEGA] = `<svg viewBox="0 0 64 64"><path d="M22 38h20v14a6 6 0 0 1-6 6h-8a6 6 0 0 1-6-6z" fill="#fde7c7" stroke="#6b4423" stroke-width="3"/><path d="M2 38C2 20 15 6 32 6s30 14 30 32z" fill="#ffd23f" stroke="#8a6d00" stroke-width="3"/><circle cx="32" cy="18" r="6" fill="#e63946"/><circle cx="14" cy="30" r="5" fill="#e63946"/><circle cx="50" cy="30" r="5" fill="#e63946"/><text x="32" y="52" text-anchor="middle" font-size="13" font-weight="900" fill="#6b4423" font-family="sans-serif">x3</text></svg>`;
-const ROLL_ORDER = [ITEM.SHELL, ITEM.BANANA, ITEM.MUSHROOM, ITEM.MEGA];
+ICONS[ITEM.RED_SHELL] = ICONS[ITEM.SHELL].replace('#2ec27e', '#e63946').replaceAll('#14532d', '#7a1017').replace('#f5f5dc', '#ffe0e0');
+ICONS[ITEM.LIGHTNING] = `<svg viewBox="0 0 64 64"><path d="M38 4L12 36h16l-6 24 28-34H34z" fill="#ffd23f" stroke="#8a6d00" stroke-width="3" stroke-linejoin="round"/></svg>`;
+ICONS[ITEM.SHIELD] = `<svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="26" fill="#7fdcff" fill-opacity="0.35" stroke="#2a9df4" stroke-width="4"/><path d="M18 22a16 16 0 0 1 14-8" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"/><circle cx="32" cy="36" r="8" fill="#2a9df4"/></svg>`;
+ICONS[ITEM.MAGNET] = `<svg viewBox="0 0 64 64"><path d="M14 10h12v22a6 6 0 0 0 12 0V10h12v22a18 18 0 0 1-36 0z" fill="#e63946" stroke="#7a1017" stroke-width="3"/><path d="M14 10h12v8H14zM38 10h12v8H38z" fill="#dfe6ee" stroke="#7a1017" stroke-width="3"/><circle cx="52" cy="50" r="5" fill="#ffd23f" stroke="#8a6d00" stroke-width="2"/></svg>`;
+const ROLL_ORDER = [ITEM.SHELL, ITEM.BANANA, ITEM.MUSHROOM, ITEM.RED_SHELL, ITEM.SHIELD, ITEM.MAGNET, ITEM.LIGHTNING, ITEM.MEGA];
 const $ = (id) => document.getElementById(id);
 
 /**
