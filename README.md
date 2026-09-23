@@ -40,6 +40,9 @@ public broker handles signalling only; gameplay traffic is direct WebRTC.
   the menu's track-code box to race that exact track again (solo or time trial).
 - **Time Trial**: just you and three mushrooms, no item boxes. Your best run on a track is saved
   as a see-through ghost to race against next time, with lap splits vs the ghost.
+- **Grand Prix**: four races in a row with points per place (15, 12, 10, 8, 6, 4, 2, 1), a running
+  standings table on the results screen, and a trophy podium for the overall top three. Solo via
+  the menu; in a room the host ticks "Grand Prix" in the lobby.
 - **Phones & tablets**: on-screen controls. The kart accelerates by itself; slide on the left pad
   to steer, with Drift, Item, Brake and Respawn buttons on the right.
 - **Garage** (in the room lobby and between rounds): coins you're holding when a round ends (plus a
