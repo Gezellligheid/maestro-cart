@@ -27,6 +27,7 @@ import { Movers } from './game/Movers.js';
 import { Weather } from './engine/Weather.js';
 import { Records, seedToCode, codeToSeed } from './game/Records.js';
 import { GhostRecorder, GhostKart, saveGhost, loadGhost } from './game/Ghost.js';
+import { Cup, CUP_RACES } from './game/Cup.js';
 import { Emotes } from './ui/Emotes.js';
 import { TouchControls } from './ui/Touch.js';
 import { StatsPanel } from './ui/StatsPanel.js';
@@ -66,6 +67,9 @@ class Game {
     this.ghostRec = new GhostRecorder();
     this.ghost = null;
     document.getElementById('btn-trial').addEventListener('click', () => this.startTrial(this.lobby.name));
+    document.getElementById('btn-cup').addEventListener('click', () => this.startCup(this.lobby.name));
+    this.cup = null; // Grand Prix in progress (solo / host)
+    this.cupView = null; // { race, table } shown to everyone
     document.getElementById('btn-copy-code').addEventListener('click', () => {
       const code = seedToCode(this.track.seed);
       navigator.clipboard?.writeText(code).catch(() => {});
@@ -284,6 +288,8 @@ class Game {
   }
 
   toMenu() {
+    this.cup = null;
+    this.cupView = null;
     this.podium.stop();
     this.finishFlag.cancel();
     clearTimeout(this._menuMusicTimer);
@@ -309,7 +315,7 @@ class Game {
       this.toggleReady();
       return;
     }
-    if (this.mode === 'solo') this.startSolo(this.lobby.name);
+    if (this.mode === 'solo') this._startSoloRace(this.lobby.name);
     else if (this.mode === 'trial') this.startTrial(this.lobby.name, this.track.seed);
     else if (this.mode === 'host') this.startHostRace();
   }
@@ -334,7 +340,18 @@ class Game {
   }
 
   startSolo(name) {
+    this.cup = null;
+    this._startSoloRace(name);
+  }
+
+  startCup(name) {
+    this.cup = new Cup();
+    this._startSoloRace(name);
+  }
+
+  _startSoloRace(name) {
     this.mode = 'solo';
+    this._advanceCup();
     const roster = [{ slot: 0, name, control: 'local', look: this.garage.look }];
     for (let i = 1; i <= SOLO_BOTS; i++) roster.push({ slot: i, name: CPU_NAMES[i - 1], control: 'bot', look: randomLook() });
     this._setupRace(roster, COUNTDOWN_MS, this._codeSeed() ?? this._nextSeed());
@@ -343,6 +360,8 @@ class Game {
   /** Time trial: just you, three mushrooms, no item boxes, and your best run as a ghost. */
   startTrial(name, seed = null) {
     this.mode = 'trial';
+    this.cup = null;
+    this.cupView = null;
     const s = seed ?? this._codeSeed() ?? this._nextSeed();
     this._setupRace([{ slot: 0, name, control: 'local', look: this.garage.look }], COUNTDOWN_MS, s);
     this.items.clearBoxes();
@@ -353,6 +372,52 @@ class Game {
     this.ghostRec.reset();
     this._ghostSaved = false;
     this.hud.subtitle(`Time Trial · ${this.track.name}${this.ghost ? ' · Ghost ' + formatTime(this.ghost.time) : ''}`, 3.2);
+  }
+
+  /** Grand Prix bookkeeping before each race (a finished cup starts over). */
+  _advanceCup() {
+    if (this.mode === 'host') {
+      const wanted = document.getElementById('cup-toggle').checked;
+      if (!wanted) this.cup = null;
+      else if (!this.cup || this.cup.over) this.cup = new Cup();
+    } else if (this.cup && this.cup.over) {
+      this.cup = new Cup();
+    }
+    if (this.cup) this.cup.nextRace();
+    this.cupView = this.cup ? { race: this.cup.race, table: this.cup.table() } : null;
+  }
+
+  /** Race over: award Grand Prix points (solo / host); the host shares the table. */
+  _scoreCup() {
+    if (!this.cup || this.mode === 'client') return;
+    const order = this.race.finishOrder.map((f) => f.slot);
+    const finished = order.length;
+    for (const k of this.race.standings) if (!order.includes(k.slot)) order.push(k.slot);
+    this.cup.score(order.map((slot) => {
+      const k = this.kartBySlot[slot];
+      return { slot, name: k ? k.name : `Player ${slot + 1}`, look: k ? k.look : null };
+    }), finished);
+    this.cupView = { race: this.cup.race, table: this.cup.table() };
+    if (this.mode === 'host') this.net.broadcast({ t: 'cup', race: this.cupView.race, table: this.cupView.table.map((r) => ({ slot: r.slot, name: r.name, look: r.look, points: r.points, last: r.last })) });
+  }
+
+  _renderCup() {
+    const box = document.getElementById('results-cup');
+    const cv = this.cupView;
+    box.classList.toggle('hidden', !cv);
+    if (!cv) return;
+    const done = this.race.state === 'done';
+    document.getElementById('results-cup-race').textContent = `Race ${cv.race}/${CUP_RACES}${done && cv.race >= CUP_RACES ? ' · Final' : ''}`;
+    const me = this.localKart ? this.localKart.slot : -1;
+    const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const rows = cv.table.length ? cv.table : this.race.standings.map((k) => ({ slot: k.slot, name: k.name, points: 0, last: 0 }));
+    document.getElementById('results-cup-list').innerHTML = rows.map((r, i) => `
+      <li class="flex items-center gap-3 rounded-lg px-3 py-1.5 text-sm ${r.slot === me ? 'bg-amber-300/20 ring-1 ring-amber-300/60' : 'bg-black/25'}">
+        <b class="w-5 text-white/70">${i + 1}</b>
+        <span class="min-w-0 flex-1 truncate font-bold">${esc(r.name)}</span>
+        ${done && r.last ? `<span class="text-xs font-bold text-emerald-300">+${r.last}</span>` : ''}
+        <b class="w-8 text-right tabular-nums">${r.points}</b>
+      </li>`).join('');
   }
 
   /** Seed from the menu's track-code box (used once, then cleared). */
@@ -378,8 +443,9 @@ class Game {
     clearTimeout(this._autoStart);
     this._autoStart = null;
     this.net.resetReady();
+    this._advanceCup();
     const seed = this._nextSeed();
-    this.net.broadcast({ t: 'start', players, countdown: COUNTDOWN_MS, seed });
+    this.net.broadcast({ t: 'start', players, countdown: COUNTDOWN_MS, seed, cup: this.cup ? this.cup.race : 0 });
     this._setupRace(players.map((p) => ({ ...p, control: p.cpu ? 'bot' : p.slot === 0 ? 'local' : 'remote' })), COUNTDOWN_MS, seed);
   }
 
@@ -392,6 +458,8 @@ class Game {
       look: p.slot === mySlot ? this.garage.look : sanitizeLook(p.look),
       cpu: !!p.cpu,
     })).filter((p) => p.slot >= 0 && p.slot < MAX_KARTS);
+    const cupRace = msg.cup | 0;
+    this.cupView = cupRace ? { race: cupRace, table: cupRace > 1 && this.cupView ? this.cupView.table : [] } : null;
     this._setupRace(roster, msg.countdown, msg.seed >>> 0);
   }
 
@@ -477,7 +545,8 @@ class Game {
     this.hud.resetCache();
     this.hud.clearCenter();
     this.hud.show(true);
-    this.hud.subtitle(`Round ${this.round} · ${this.track.name}${this.track.moodLabel ? ' · ' + this.track.moodLabel : ''}`, 3.2);
+    const head = this.cupView ? `Grand Prix · Race ${this.cupView.race}/${CUP_RACES}` : `Round ${this.round}`;
+    this.hud.subtitle(`${head} · ${this.track.name}${this.track.moodLabel ? ' · ' + this.track.moodLabel : ''}`, 3.2);
     document.getElementById('results-track').textContent = `Round ${this.round} · ${this.track.name} · Track code ${seedToCode(seed)}`;
     const rec = this.records.track(seed);
     if (rec && rec.lap != null) setTimeout(() => { if (this.inRace && this.race.state === 'countdown') this.hud.subtitle(`Your lap record here: ${formatTime(rec.lap)}`, 2.5); }, 3300);
@@ -660,6 +729,7 @@ class Game {
 
   _endRace() {
     this.race.state = 'done';
+    this._scoreCup();
     if (!this.localKart?.finished) this.audio.playAfterRace(2);
     if (this.mode === 'host') {
       this.net.broadcast({ t: 'over' });
@@ -691,17 +761,23 @@ class Game {
       this._podiumDone();
       return;
     }
-    const order = this.race.finishOrder.map((f) => f.slot);
-    for (const k of this.race.standings) if (!order.includes(k.slot)) order.push(k.slot);
-    const entries = order.slice(0, 3).map((slot, i) => {
-      const k = this.kartBySlot[slot];
-      return k ? { place: i + 1, name: k.name, look: k.look } : null;
-    }).filter(Boolean);
+    const cupFinal = this.cupView && this.cupView.race >= CUP_RACES && this.cupView.table.length;
+    let entries;
+    if (cupFinal) {
+      entries = this.cupView.table.slice(0, 3).map((r, i) => ({ place: i + 1, name: r.name, look: this.kartBySlot[r.slot]?.look || r.look }));
+    } else {
+      const order = this.race.finishOrder.map((f) => f.slot);
+      for (const k of this.race.standings) if (!order.includes(k.slot)) order.push(k.slot);
+      entries = order.slice(0, 3).map((slot, i) => {
+        const k = this.kartBySlot[slot];
+        return k ? { place: i + 1, name: k.name, look: k.look } : null;
+      }).filter(Boolean);
+    }
     this.closeGarage();
     this.results.show(false);
     this.hud.show(false);
     this.resultsTimer = 0;
-    this.podium.start(entries);
+    this.podium.start(entries, cupFinal ? { title: '🏆 Grand Prix', winText: 'wins the Grand Prix!' } : {});
   }
 
   _podiumDone() {
@@ -742,6 +818,8 @@ class Game {
     }
     let note = '';
     let againLabel = null;
+    this._renderCup();
+    if (this.cup && this.mode === 'solo') againLabel = this.cup.over ? 'New Grand Prix' : `Next Race · ${this.cup.race + 1}/${CUP_RACES}`;
     if (this.mode === 'trial') {
       const rec = this.records.track(this.track.seed);
       againLabel = 'Retry · Race your ghost';
@@ -944,6 +1022,14 @@ class Game {
           const k = this.kartBySlot[f.slot];
           if (k && !k.simulated) { k.finished = true; k.finishTime = f.time; }
         }
+        this._refreshResults();
+      }
+    } else if (msg.t === 'cup') {
+      if (Array.isArray(msg.table)) {
+        this.cupView = {
+          race: msg.race | 0,
+          table: msg.table.map((r) => ({ slot: r.slot | 0, name: String(r.name).slice(0, 16), look: sanitizeLook(r.look), points: r.points | 0, last: r.last | 0 })),
+        };
         this._refreshResults();
       }
     } else if (msg.t === 'over') {

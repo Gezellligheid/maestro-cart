@@ -77,8 +77,9 @@ export class PodiumCeremony {
     this.renderer.scene.add(this.stage);
   }
 
-  /** entries: [{ place: 1..3, name, look }] */
-  start(entries) {
+  /** entries: [{ place: 1..3, name, look }]; opts.title / opts.winText for the Grand Prix. */
+  start(entries, opts = {}) {
+    this.winText = opts.winText || 'wins!';
     this.active = true;
     this.t = 0;
     this.stage.visible = true;
@@ -98,7 +99,7 @@ export class PodiumCeremony {
     });
     this.list = [];
     this.namesEl.innerHTML = '';
-    this.titleEl.textContent = 'Podium';
+    this.titleEl.textContent = opts.title || 'Podium';
     this.ui.classList.remove('hidden');
     const cam = this.renderer.camera;
     this._camPos.set(P.x, P.y + 7, P.z + 30);
@@ -137,7 +138,7 @@ export class PodiumCeremony {
     card.style.order = String(slot.place === 1 ? 2 : slot.place === 2 ? 1 : 3);
     card.innerHTML = `<span class="title text-3xl" style="color:${s.medal}">${s.label}</span><span class="max-w-40 truncate font-extrabold">${escapeHtml(slot.name)}</span>`;
     this.namesEl.appendChild(card);
-    if (slot.place === 1) this.titleEl.textContent = `${slot.name} wins!`;
+    if (slot.place === 1) this.titleEl.textContent = `${slot.name} ${this.winText}`;
   }
 
   update(dt, time) {

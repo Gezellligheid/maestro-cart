@@ -102,6 +102,7 @@ export class Lobby {
     this.nameInput.disabled = true;
     $('room-code').textContent = code;
     $('btn-start').classList.toggle('hidden', !isHost);
+    $('cup-row').classList.toggle('hidden', !isHost);
   }
 
   setPlayers(players, localSlot) {

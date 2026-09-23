@@ -33,7 +33,10 @@
         <input id="name-input" maxlength="16" autocomplete="off" spellcheck="false" class="field mt-1" placeholder="Your name" />
 
         <div id="menu-main" class="mt-6 flex flex-col gap-3">
-          <button id="btn-solo" class="btn btn-primary"><i data-lucide="gamepad-2"></i>Solo Practice</button>
+          <div class="flex gap-2">
+            <button id="btn-solo" class="btn btn-primary flex-1"><i data-lucide="gamepad-2"></i>Solo Race</button>
+            <button id="btn-cup" class="btn btn-primary flex-1"><i data-lucide="trophy"></i>Grand Prix</button>
+          </div>
           <div class="flex gap-2">
             <button id="btn-trial" class="btn btn-secondary flex-1"><i data-lucide="timer"></i>Time Trial</button>
             <input id="track-code" maxlength="8" autocomplete="off" spellcheck="false" class="field w-36 font-mono uppercase tracking-widest" placeholder="TRACK CODE" title="Optional: a track code from the results screen replays that track (solo &amp; time trial)" />
@@ -69,6 +72,10 @@
               <button id="cpu-plus" class="btn btn-ghost h-8 w-8 p-0 text-lg" aria-label="More CPU racers">+</button>
             </div>
           </div>
+          <label id="cup-row" class="flex items-center justify-between rounded-xl bg-black/25 px-3 py-2">
+            <span><span class="text-sm font-bold">Grand Prix</span> <span class="text-xs text-white/50">4 races, points, trophy</span></span>
+            <input id="cup-toggle" type="checkbox" class="h-5 w-5 accent-amber-300" />
+          </label>
           <button id="btn-ready" class="btn btn-primary"><i data-lucide="check"></i><span>Ready</span></button>
           <p id="ready-status" class="text-center text-sm text-white/60"></p>
           <button id="btn-start" class="btn btn-ghost text-sm"><i data-lucide="flag"></i>Start now (skip ready-up)</button>
@@ -198,6 +205,10 @@
           <button id="btn-copy-code" class="shrink-0 text-xs font-bold text-sky-300 hover:underline">Copy code</button>
         </div>
         <ol id="results-list" class="mt-4 flex flex-col gap-1.5"></ol>
+        <div id="results-cup" class="mt-4 hidden">
+          <p class="flex items-center justify-between px-1 text-xs font-bold uppercase tracking-widest text-white/50"><span><i data-lucide="trophy" class="mr-1 inline h-3.5 w-3.5 align-[-2px] text-amber-300"></i>Grand Prix standings</span><span id="results-cup-race"></span></p>
+          <ol id="results-cup-list" class="mt-1 flex flex-col gap-1"></ol>
+        </div>
         <p id="results-note" class="mt-3 min-h-5 text-center text-sm text-white/60"></p>
         <div class="mt-3 flex items-center justify-between gap-3 rounded-2xl bg-black/30 px-4 py-3">
           <p id="garage-earned" class="text-sm font-bold text-amber-200/90"></p>
