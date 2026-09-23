@@ -204,6 +204,7 @@ export class Audio {
       trick: { type: 'triangle', f0: 600, f1: 1400, dur: 0.25, vol: 0.18 },
       stall: { type: 'sawtooth', f0: 90, f1: 40, dur: 0.6, vol: 0.2 },
       horn: { type: 'square', f0: 440, f1: 420, dur: 0.35, vol: 0.14 },
+      emote: { type: 'sine', f0: 700, f1: 1050, dur: 0.14, vol: 0.12 },
     };
     const p = presets[kind] || presets.item;
     osc.type = p.type;

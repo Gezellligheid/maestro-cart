@@ -1,6 +1,6 @@
 import './style.css';
 import * as THREE from 'three';
-import { createIcons, Flag, Users, Gamepad2, LogIn, Trophy, RotateCcw, Link, LoaderCircle, House, Wrench, Check, Settings as SettingsIcon } from 'lucide';
+import { createIcons, Flag, Users, Gamepad2, LogIn, Trophy, RotateCcw, Link, LoaderCircle, House, Wrench, Check, Medal, Eye, ChevronLeft, ChevronRight, Settings as SettingsIcon } from 'lucide';
 
 import { Renderer } from './engine/Renderer.js';
 import { Physics } from './engine/Physics.js';
@@ -25,6 +25,10 @@ import { PodiumCeremony } from './game/Podium.js';
 import { FinishFlag } from './ui/FinishFlag.js';
 import { Movers } from './game/Movers.js';
 import { Weather } from './engine/Weather.js';
+import { Records, seedToCode } from './game/Records.js';
+import { Emotes } from './ui/Emotes.js';
+import { TouchControls } from './ui/Touch.js';
+import { StatsPanel } from './ui/StatsPanel.js';
 import {
   MAX_KARTS, TOTAL_LAPS, SOLO_BOTS, NET_TICK_HZ, KART, CPU_NAMES,
 } from './game/constants.js';
@@ -51,6 +55,12 @@ class Game {
     this._sfxState = { rolling: false, coins: 0, boost: false, mega: false, countdown: false };
     this.settings = new Settings(this.audio);
     this.settings.renderer = this.renderer;
+    this.records = new Records();
+    this.statsPanel = new StatsPanel(this.records);
+    this.emotes = new Emotes((i) => this.sendEmote(i));
+    this.touch = new TouchControls(this.input);
+    this.spectating = false;
+    this.spectateSlot = -1;
     window.addEventListener('keydown', (e) => {
       if (e.target.tagName === 'INPUT') return;
       if (e.code === 'KeyM') {
@@ -58,8 +68,20 @@ class Game {
         if (this.settings.visible) this.settings.refresh();
       } else if (e.code === 'Escape') {
         this.settings.toggle();
+      } else if (/^Digit[1-4]$/.test(e.code)) {
+        this.sendEmote(Number(e.code.slice(5)) - 1);
+      } else if (this.spectating && (e.code === 'ArrowLeft' || e.code === 'ArrowRight')) {
+        this._cycleSpectate(e.code === 'ArrowRight' ? 1 : -1);
+      } else if (e.code === 'Tab' && this._canSpectate()) {
+        e.preventDefault();
+        if (this.spectating) this._stopSpectate(true);
+        else this._startSpectate();
       }
     });
+    document.getElementById('btn-spectate').addEventListener('click', () => this._startSpectate());
+    document.getElementById('spec-prev').addEventListener('click', () => this._cycleSpectate(-1));
+    document.getElementById('spec-next').addEventListener('click', () => this._cycleSpectate(1));
+    document.getElementById('spec-results').addEventListener('click', () => this._stopSpectate(true));
 
     this.mode = 'menu'; // menu | solo | host | client
     this.round = 0;
@@ -165,7 +187,13 @@ class Game {
     this.race.onLap = (k, lapTime) => {
       if (k !== this.localKart) return;
       if (k.lap === TOTAL_LAPS - 1) this.hud.flash('Final Lap!', 1.6, '#ffd23f');
-      this.hud.subtitle(`Lap ${formatTime(lapTime)}`, 2.2);
+      const rec = this.records.submitLap(this.track.seed, this.track.name, lapTime);
+      if (rec === 'record') {
+        this.hud.subtitle(`Lap ${formatTime(lapTime)} · New lap record!`, 2.6);
+        this.audio.blip('trick');
+      } else {
+        this.hud.subtitle(`Lap ${formatTime(lapTime)}`, 2.2);
+      }
     };
     this.race.onFinish = (k) => this._onKartFinished(k);
   }
@@ -325,6 +353,9 @@ class Game {
   }
 
   _clearRace() {
+    this._stopSpectate(false);
+    this.emotes.clear();
+    this.touch.show(false);
     for (const k of this.karts) k.destroy();
     this.karts.length = 0;
     this.kartBySlot.fill(null);
@@ -402,7 +433,10 @@ class Game {
     this.hud.clearCenter();
     this.hud.show(true);
     this.hud.subtitle(`Round ${this.round} · ${this.track.name}${this.track.moodLabel ? ' · ' + this.track.moodLabel : ''}`, 3.2);
-    document.getElementById('results-track').textContent = `Round ${this.round} · ${this.track.name}`;
+    document.getElementById('results-track').textContent = `Round ${this.round} · ${this.track.name} · Track code ${seedToCode(seed)}`;
+    const rec = this.records.track(seed);
+    if (rec && rec.lap != null) setTimeout(() => { if (this.inRace && this.race.state === 'countdown') this.hud.subtitle(`Your lap record here: ${formatTime(rec.lap)}`, 2.5); }, 3300);
+    this.touch.show(true);
     const lk = this.localKart;
     this.renderer.updateChaseCamera(lk.x, lk.y - 0.6, lk.z, lk.yaw, 0, false, 0, true);
   }
@@ -541,7 +575,14 @@ class Game {
       this.race.recordFinish(k.slot, k.name, k.finishTime);
       this.net.send({ t: 'finish', s: k.slot, time: k.finishTime });
     }
+    if (k.control === 'bot' && k !== this.localKart) {
+      if (this.race.finishOrder.length === 1) this._botEmote(k, 3);
+      else if (Math.random() < 0.35) this._botEmote(k, 0);
+    }
     if (k === this.localKart) {
+      const place = this.race.finishOrder.findIndex((f) => f.slot === k.slot) + 1 || k.rank;
+      const best = this.records.submitRace(this.track.seed, this.track.name, k.finishTime, place);
+      if (best === 'record') setTimeout(() => this.hud.subtitle('New best time on this track!', 2.5), 3000);
       this.audio.stopMusic(0.5);
       this.audio.play('raceEnd');
       const jingle = this.audio.duration('raceEnd') || 2.7;
@@ -584,6 +625,9 @@ class Game {
   /** Race fully finished: chequered flag for everyone, then fade into the podium ceremony. */
   _startPodium() {
     if (this.podium.active || this.finishFlag.active) return;
+    this._stopSpectate(false);
+    this.emotes.clear();
+    this.touch.show(false);
     this._bankCoins();
     this.closeGarage();
     this.results.show(false);
@@ -615,6 +659,7 @@ class Game {
 
   _showResults() {
     this._bankCoins();
+    if (this.spectating) return; // watching the race; Tab / the Results button brings them back
     if (this.podium.active || this.finishFlag.active) return; // the podium shows results when it's done
     this.results.show(true);
     this._refreshResults();
@@ -629,6 +674,7 @@ class Game {
     const place = finishIdx >= 0 ? finishIdx + 1 : this.race.standings.length;
     const bonus = PLACEMENT_BONUS[Math.min(place, PLACEMENT_BONUS.length) - 1];
     this.garage.deposit(k.coins + bonus);
+    this.records.addCoins(k.coins + bonus);
     this.garageUI.setEarned(`+${k.coins + bonus} coins: ${k.coins} held + ${bonus} for ${finishIdx >= 0 ? ordinal(place) : 'taking part'}`);
     this.garageUI.render();
   }
@@ -658,11 +704,83 @@ class Game {
       };
       if (done) note = '';
     }
+    document.getElementById('btn-spectate').classList.toggle('hidden', !this._canSpectate());
     this.results.render(entries, this.localKart ? this.localKart.slot : -1, {
       canRestart: this.mode === 'solo' || this.mode === 'host',
       note,
       ready,
     });
+  }
+
+  // =================================================================== emotes & spectating
+
+  sendEmote(idx) {
+    if (!this.inRace || !this.localKart || this.podium.active || this.finishFlag.active) return;
+    if (this.now - (this._lastEmote || 0) < 1200) return; // no spamming
+    this._lastEmote = this.now;
+    this._showEmote(this.localKart.slot, idx);
+    if (this.mode === 'host') this.net.broadcast({ t: 'emote', s: this.localKart.slot, e: idx });
+    else if (this.mode === 'client') this.net.send({ t: 'emote', e: idx });
+  }
+
+  _showEmote(slot, idx) {
+    if (!this.inRace || !this.kartBySlot[slot] || this.podium.active) return;
+    this.emotes.show(slot, idx);
+    this.audio.blip('emote');
+  }
+
+  /** CPU racers emote too (solo / host decide, the host shares it). */
+  _botEmote(k, idx) {
+    if (this.mode === 'client') return;
+    this._showEmote(k.slot, idx);
+    if (this.mode === 'host') this.net.broadcast({ t: 'emote', s: k.slot, e: idx });
+  }
+
+  _canSpectate() {
+    return this.inRace && !!this.localKart?.finished && this.race.state !== 'done' && !this.podium.active && !this.finishFlag.active;
+  }
+
+  /** After finishing: hide the results and follow the racers still on track. */
+  _startSpectate() {
+    if (!this._canSpectate()) return;
+    const racing = this.race.standings.filter((k) => !k.finished);
+    const target = racing[0] || this.race.standings[0] || this.localKart;
+    this.spectateSlot = target.slot;
+    this.spectating = true;
+    this._specSnap = true;
+    this.results.show(false);
+    this._specLabel = '';
+    this._updateSpectateUI();
+  }
+
+  _stopSpectate(showResults) {
+    if (!this.spectating) return;
+    this.spectating = false;
+    this._specSnap = true;
+    this._updateSpectateUI();
+    if (showResults) this._showResults();
+  }
+
+  _cycleSpectate(dir) {
+    if (!this.spectating) return;
+    const list = this.race.standings.length ? this.race.standings : this.karts;
+    const i = list.findIndex((k) => k.slot === this.spectateSlot);
+    this.spectateSlot = list[(i + dir + list.length) % list.length].slot;
+    this._specSnap = true;
+    this._updateSpectateUI();
+  }
+
+  _updateSpectateUI() {
+    const bar = document.getElementById('hud-spectate');
+    bar.classList.toggle('hidden', !this.spectating);
+    bar.classList.toggle('flex', this.spectating);
+    if (!this.spectating) return;
+    const k = this.kartBySlot[this.spectateSlot];
+    const label = k ? `${k.name} · ${k.finished ? 'finished' : ordinal(k.rank)}` : '';
+    if (label !== this._specLabel) {
+      this._specLabel = label;
+      document.getElementById('spec-name').textContent = label;
+    }
   }
 
   // =================================================================== ready-up
@@ -727,6 +845,17 @@ class Game {
   }
 
   _onMessage(msg, fromSlot) {
+    if (msg.t === 'emote') {
+      const idx = msg.e | 0;
+      if (this.mode === 'host') {
+        // Relay a client's emote to everyone (the sender is always the slot it came from).
+        this._showEmote(fromSlot, idx);
+        this.net.broadcast({ t: 'emote', s: fromSlot, e: idx });
+      } else if ((msg.s | 0) !== this.localKart?.slot) {
+        this._showEmote(msg.s | 0, idx);
+      }
+      return;
+    }
     if (this.mode === 'host') {
       if (msg.t === 'use') this.items.handleRequest(msg, fromSlot);
       else if (msg.t === 'finish' && msg.s === fromSlot) {
@@ -842,8 +971,12 @@ class Game {
     } else if (this.garageUI.visible) {
       this.renderer.updateShowroomCamera(time, SHOWROOM.x, SHOWROOM.y, SHOWROOM.z);
     } else if (this.inRace && lk) {
-      const zoom = 1 + (lk.megaScale - 1) * 0.55;
-      this.renderer.updateChaseCamera(lk.renderX, lk.renderY, lk.renderZ, lk.renderYaw + lk.driftVisual * 0.35, lk.speed, lk.boostTimer > 0, dt, false, zoom, lk.visPitch || 0, lk.visRoll || 0);
+      const view = (this.spectating && this.kartBySlot[this.spectateSlot]) || lk;
+      const zoom = 1 + (view.megaScale - 1) * 0.55;
+      this.renderer.updateChaseCamera(view.renderX, view.renderY, view.renderZ, view.renderYaw + view.driftVisual * 0.35, view.speed, view.boostTimer > 0, dt, this._specSnap, zoom, view.visPitch || 0, view.visRoll || 0);
+      this._specSnap = false;
+      if (this.spectating) this._updateSpectateUI();
+      if (this.input.touch) this.input.touch.gas = this.race.state === 'racing';
       this.hud.update(dt, {
         kart: lk,
         standings: this.race.standings,
@@ -859,6 +992,7 @@ class Game {
       this.renderer.updateOrbitCamera(time, b.cx, b.cz, 230);
     }
 
+    if (this.inRace && !this.podium.active) this.emotes.update(dt, this.kartBySlot, this.renderer.camera);
     this.renderer.trackPerf(dt);
     this.renderer.render();
     this._updateStats(dt);
@@ -1033,7 +1167,7 @@ class Game {
 }
 
 async function boot() {
-  createIcons({ icons: { Flag, Users, Gamepad2, LogIn, Trophy, RotateCcw, Link, LoaderCircle, House, Wrench, Check, Settings: SettingsIcon } });
+  createIcons({ icons: { Flag, Users, Gamepad2, LogIn, Trophy, RotateCcw, Link, LoaderCircle, House, Wrench, Check, Medal, Eye, ChevronLeft, ChevronRight, Settings: SettingsIcon } });
   const loading = document.getElementById('loading');
   try {
     const physics = await Physics.create();

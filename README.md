@@ -31,6 +31,14 @@ public broker handles signalling only; gameplay traffic is direct WebRTC.
 - **Shortcuts**: many tracks have a fenced dirt path through the infield of a tight corner (a gap
   in the inside barrier; dashed on the minimap). Dirt is a little slower than tarmac, but the path
   is much shorter, and there are coins on it.
+- **Emotes**: keys 1–4 (or the bar at the bottom) pop a 👋 😂 😤 🏆 bubble over your kart for
+  everyone in the room; CPU racers emote too.
+- **Spectate**: after you finish, "Watch the race" (or Tab) follows the racers still on track;
+  ← → switch between them.
+- **Stats & records** (menu → Your Stats): races, wins, podiums, coins, and best lap / race time
+  per track, kept in this browser. Every track has a code (shown on the results screen).
+- **Phones & tablets**: on-screen controls. The kart accelerates by itself; slide on the left pad
+  to steer, with Drift, Item, Brake and Respawn buttons on the right.
 - **Garage** (in the room lobby and between rounds): coins you're holding when a round ends (plus a
   placement bonus) are banked. Spend them on Top Speed, Acceleration, Handling and Drift Boost, and on
   cosmetic parts (bodies, spoilers, wheels, headgear) plus paint/accent colours, previewed in 3D and

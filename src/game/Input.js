@@ -27,6 +27,7 @@ export class Input {
     };
     this._prevPad = { drift: false, item: false };
     this.enabled = true;
+    this.touch = null; // set by TouchControls on phones / tablets
 
     window.addEventListener('keydown', (e) => {
       if (!this.enabled || this._isTyping(e)) return;
@@ -74,6 +75,14 @@ export class Input {
       this._prevPad.drift = padDrift;
       this._prevPad.item = padItem;
       drift = drift || padDrift;
+    }
+
+    // Touch controls: the kart drives itself forward once the race is on; brake to slow down.
+    const t = this.touch;
+    if (t && t.active) {
+      if (Math.abs(t.steer) > 0.05) steer = t.steer;
+      drift = drift || t.drift;
+      if (throttle === 0) throttle = t.brake ? -1 : t.gas ? 1 : 0;
     }
 
     s.throttle = throttle;

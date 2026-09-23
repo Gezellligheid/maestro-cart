@@ -72,6 +72,62 @@
   animation: center-pop 0.9s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
 }
 
+.emote-btn {
+  @apply grid h-10 w-10 place-items-center rounded-full bg-black/40 text-xl backdrop-blur-sm transition hover:scale-110 hover:bg-black/60 active:scale-95;
+}
+
+.emote-anchor {
+  @apply absolute left-0 top-0;
+  will-change: transform;
+}
+
+.emote-bubble {
+  @apply relative grid h-12 w-12 place-items-center rounded-full bg-white text-3xl shadow-lg;
+}
+
+.emote-bubble::after {
+  content: '';
+  @apply absolute -bottom-1.5 left-1/2 h-3 w-3 -translate-x-1/2 rotate-45 bg-white;
+}
+
+.emote-pop {
+  animation: item-pop 0.18s ease-out;
+}
+
+.touch-btn {
+  @apply grid place-items-center rounded-full text-xs font-black tracking-wider text-white shadow-lg ring-2 ring-white/20 backdrop-blur-sm;
+  touch-action: none;
+}
+
+.touch-btn.held {
+  @apply scale-95 ring-white/70;
+}
+
+#touch-steer {
+  touch-action: none;
+}
+
+/* Touch layout: minimap moves up, speedometer and emote bar make room for the thumbs. */
+body.touch #minimap {
+  @apply bottom-auto left-auto right-3 top-44 h-28 w-28;
+}
+
+body.touch #hud .absolute.bottom-3.right-3 {
+  @apply hidden;
+}
+
+body.touch #emote-bar {
+  @apply bottom-auto left-3 top-56 translate-x-0 flex-col gap-1;
+}
+
+body.touch .emote-btn {
+  @apply h-8 w-8 text-base;
+}
+
+body.touch #hud-spectate {
+  @apply bottom-auto top-40;
+}
+
 #hud-center {
   -webkit-text-stroke: 3px rgb(0 0 0 / 0.35);
 }
