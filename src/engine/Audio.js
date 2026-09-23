@@ -4,6 +4,7 @@ import raceEndUrl from '../../sound_effects/race_end.mp3';
 import music1Url from '../../sound_effects/track1_music.mp3';
 import music2Url from '../../sound_effects/track2_music.mp3';
 import music3Url from '../../sound_effects/track3_music.mp3';
+import menuUrl from '../../sound_effects/menu_screen.mp3';
 
 const SETTINGS_KEY = 'mkbros:audio';
 const MUSIC_BASE = 0.45; // music sits under the effects at 100%
@@ -31,7 +32,8 @@ export class Audio {
       if (saved) for (const k of Object.keys(this.settings)) if (typeof saved[k] === typeof this.settings[k]) this.settings[k] = saved[k];
     } catch { /* storage unavailable */ }
     this.musicEl = null;
-    this.musicIndex = -1;
+    this.musicIndex = -1; // current track: 0..2 race music, 'menu' for the menu loop
+    this.wantMenu = false; // menu music requested before audio was unlocked
     this._unlock = () => this.init();
     window.addEventListener('pointerdown', this._unlock, { once: false });
     window.addEventListener('keydown', this._unlock, { once: false });
@@ -61,6 +63,7 @@ export class Audio {
     this.ctx.createMediaElementSource(this.musicEl).connect(this.musicFade);
 
     for (const [name, url] of Object.entries(SFX)) this._load(name, url);
+    if (this.wantMenu) this.playMenu(1.5);
     window.removeEventListener('pointerdown', this._unlock);
     window.removeEventListener('keydown', this._unlock);
   }
@@ -113,27 +116,59 @@ export class Audio {
     this._countdownSrc = null;
   }
 
-  startMusic(index) {
-    if (!this.ctx || !this.musicEl) return;
-    const i = ((index % MUSIC.length) + MUSIC.length) % MUSIC.length;
-    if (this.musicIndex !== i) {
-      this.musicEl.src = MUSIC[i];
-      this.musicIndex = i;
+  /** Switch the music element to a track and fade it in (0 = instant). */
+  _playTrack(key, url, fadeIn) {
+    clearTimeout(this._musicStop);
+    clearTimeout(this._musicSwitch);
+    if (this.musicIndex !== key) {
+      this.musicEl.src = url;
+      this.musicIndex = key;
     }
     this.musicEl.currentTime = 0;
-    this.musicFade.gain.cancelScheduledValues(this.ctx.currentTime);
-    this.musicFade.gain.setValueAtTime(1, this.ctx.currentTime);
+    const g = this.musicFade.gain, t = this.ctx.currentTime;
+    g.cancelScheduledValues(t);
+    g.setValueAtTime(fadeIn > 0 ? 0 : 1, t);
+    if (fadeIn > 0) g.linearRampToValueAtTime(1, t + fadeIn);
     this.musicEl.play().catch(() => {});
   }
 
+  /** Race music for a circuit. */
+  startMusic(index) {
+    this.wantMenu = false;
+    if (!this.ctx || !this.musicEl) return;
+    const i = ((index % MUSIC.length) + MUSIC.length) % MUSIC.length;
+    this._playTrack(i, MUSIC[i], 0);
+  }
+
+  /**
+   * Looping menu music (menu, lobby, garage and between races). Fades out whatever is playing,
+   * then fades the menu track in. Queued until the first user gesture unlocks audio.
+   */
+  playMenu(fadeIn = 2) {
+    this.wantMenu = true;
+    if (!this.ctx || !this.musicEl) return;
+    if (this.musicIndex === 'menu' && !this.musicEl.paused && !this._musicStopping) return; // already on
+    const switchNow = () => this._playTrack('menu', menuUrl, fadeIn);
+    if (!this.musicEl.paused && this.musicIndex !== 'menu') {
+      this.stopMusic(0.6);
+      this._musicSwitch = setTimeout(switchNow, 650);
+    } else {
+      switchNow();
+    }
+    this._musicStopping = false;
+  }
+
   stopMusic(fade = 1) {
+    this.wantMenu = false;
+    clearTimeout(this._musicSwitch);
     if (!this.ctx || !this.musicEl || this.musicEl.paused) return;
+    this._musicStopping = true;
     const t = this.ctx.currentTime;
     this.musicFade.gain.cancelScheduledValues(t);
     this.musicFade.gain.setValueAtTime(this.musicFade.gain.value, t);
     this.musicFade.gain.linearRampToValueAtTime(0, t + fade);
     clearTimeout(this._musicStop);
-    this._musicStop = setTimeout(() => this.musicEl.pause(), fade * 1000 + 50);
+    this._musicStop = setTimeout(() => { this.musicEl.pause(); this._musicStopping = false; }, fade * 1000 + 50);
   }
 
   /** Tiny synthesised blips for frequent events that have no sample. */

@@ -114,6 +114,7 @@ class Game {
 
     this.lobby.show(true);
     if (this.lobby.pendingRoom) this.lobby.setStatus('Room link detected — press Join to hop in.');
+    this.audio.playMenu(); // starts on the first click/keypress (browser autoplay rules)
     requestAnimationFrame(this._frame);
   }
 
@@ -225,8 +226,9 @@ class Game {
   }
 
   toMenu() {
-    this.audio.stopMusic(0.4);
+    clearTimeout(this._menuMusicTimer);
     this.audio.stopCountdown();
+    this.audio.playMenu(1.5);
     this.closeGarage();
     this.net.destroy();
     this._clearRace();
@@ -364,7 +366,8 @@ class Game {
     this.kartRenderer.setColors(this.karts);
     this.race.begin(performance.now(), countdownMs);
     this.audio.init();
-    this.audio.stopMusic(0.3);
+    clearTimeout(this._menuMusicTimer);
+    this.audio.stopMusic(0.6);
     this.audio.stopCountdown();
     this._sfxState.countdown = false;
     this.firstFinishAt = 0;
@@ -405,7 +408,7 @@ class Game {
       if (!k.simulated) continue;
       const inp = k.control === 'bot' ? k.ai.update(dt) : input;
       k.simulate(dt, inp);
-      if (k.controlsEnabled && inp.itemPressed) this.items.useItem(k);
+      if (k.controlsEnabled && inp.itemPressed && !k.finished) this.items.useItem(k);
       if (k.controlsEnabled && inp.respawnPressed) k.respawn();
     }
     this.input.consumeEdges();
@@ -484,6 +487,12 @@ class Game {
     if (k === this.localKart) {
       this.audio.stopMusic(0.5);
       this.audio.play('raceEnd');
+      const jingle = this.audio.duration('raceEnd') || 2.7;
+      clearTimeout(this._menuMusicTimer);
+      this._menuMusicTimer = setTimeout(() => this.audio.playMenu(2.5), jingle * 1000);
+      // A CPU driver takes over your kart for the cool-down laps.
+      if (!k.ai) k.ai = new AIDriver(k, this.track, 0.85);
+      k.control = 'bot';
       this.hud.flash(k.rank === 1 ? 'You Win!' : 'Finish!', 2.5, k.rank === 1 ? '#ffd23f' : '#ffffff');
       this.hud.subtitle(`${formatTime(k.finishTime)}`, 3);
       this.resultsTimer = 2.2;
@@ -505,12 +514,12 @@ class Game {
 
   _endRace() {
     this.race.state = 'done';
-    if (!this.localKart?.finished) this.audio.stopMusic(0.8);
+    if (!this.localKart?.finished) this.audio.playMenu(2);
     if (this.mode === 'host') {
       this.net.broadcast({ t: 'over' });
       this.net.acceptingPlayers = true;
     }
-    for (const k of this.karts) k.controlsEnabled = k.control === 'local';
+    for (const k of this.karts) k.controlsEnabled = k === this.localKart; // your kart (CPU-driven once finished) keeps cruising
     this._showResults();
   }
 
@@ -660,7 +669,7 @@ class Game {
       }
     } else if (msg.t === 'over') {
       this.race.state = 'done';
-      this.audio.stopMusic(0.8);
+      if (!this.localKart?.finished) this.audio.playMenu(2);
       this._showResults();
     }
   }

@@ -41,7 +41,8 @@ public broker handles signalling only; gameplay traffic is direct WebRTC.
   steals a rival's item), storm cloud (reverses the leader's steering), lightning bolt (back half:
   shrinks everyone else), rocket (last places: 3.5 s autopilot at 1.6× speed, bowls karts over) and
   the rare Mega Mushroom (3× size for 10 s).
-- **Audio**: `sound_effects/` holds the countdown, item-roulette, race-end jingle and three music
+- **Audio**: `sound_effects/` holds the countdown, item-roulette, race-end jingle, the menu loop
+  (menu, lobby, garage and between races) and three race music
   tracks (one per circuit). Settings (gear button or Esc) has master/music/effects volume; M mutes.
 
 ## Architecture
