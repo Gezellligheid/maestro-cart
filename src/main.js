@@ -21,6 +21,7 @@ import { PacketWriter, KartRecord, readPacket, PKT_CLIENT_STATE, PKT_SNAPSHOT } 
 import { HUD } from './ui/HUD.js';
 import { Lobby, Results, GarageUI } from './ui/Lobby.js';
 import { Settings } from './ui/Settings.js';
+import { PodiumCeremony } from './game/Podium.js';
 import {
   MAX_KARTS, TOTAL_LAPS, SOLO_BOTS, NET_TICK_HZ, KART, CPU_NAMES,
 } from './game/constants.js';
@@ -106,6 +107,7 @@ class Game {
       onGarage: () => this.openGarage(),
     });
     this._buildShowroom();
+    this.podium = new PodiumCeremony(this.renderer, this.particles, this.audio, () => this._podiumDone());
 
     // Fixed-step callbacks are created once so the frame loop never allocates closures.
     this._pre = (dt) => this._fixedPre(dt);
@@ -226,6 +228,7 @@ class Game {
   }
 
   toMenu() {
+    this.podium.stop();
     clearTimeout(this._menuMusicTimer);
     this.audio.stopCountdown();
     this.audio.playMenu(1.5);
@@ -324,6 +327,7 @@ class Game {
   }
 
   _setupRace(roster, countdownMs, seed) {
+    this.podium.stop();
     this.closeGarage();
     this._clearRace();
     this.round++;
@@ -489,7 +493,7 @@ class Game {
       this.audio.play('raceEnd');
       const jingle = this.audio.duration('raceEnd') || 2.7;
       clearTimeout(this._menuMusicTimer);
-      this._menuMusicTimer = setTimeout(() => this.audio.playMenu(2.5), jingle * 1000);
+      this._menuMusicTimer = setTimeout(() => this.audio.playAfterRace(2.5), jingle * 1000);
       // A CPU driver takes over your kart for the cool-down laps.
       if (!k.ai) k.ai = new AIDriver(k, this.track, 0.85);
       k.control = 'bot';
@@ -514,17 +518,40 @@ class Game {
 
   _endRace() {
     this.race.state = 'done';
-    if (!this.localKart?.finished) this.audio.playMenu(2);
+    if (!this.localKart?.finished) this.audio.playAfterRace(2);
     if (this.mode === 'host') {
       this.net.broadcast({ t: 'over' });
       this.net.acceptingPlayers = true;
     }
     for (const k of this.karts) k.controlsEnabled = k === this.localKart; // your kart (CPU-driven once finished) keeps cruising
+    this._startPodium();
+  }
+
+  /** Race fully finished: run the podium ceremony (top 3), then the results screen. */
+  _startPodium() {
+    if (this.podium.active) return;
+    this._bankCoins();
+    const order = this.race.finishOrder.map((f) => f.slot);
+    for (const k of this.race.standings) if (!order.includes(k.slot)) order.push(k.slot);
+    const entries = order.slice(0, 3).map((slot, i) => {
+      const k = this.kartBySlot[slot];
+      return k ? { place: i + 1, name: k.name, look: k.look } : null;
+    }).filter(Boolean);
+    this.closeGarage();
+    this.results.show(false);
+    this.hud.show(false);
+    this.resultsTimer = 0;
+    this.podium.start(entries);
+  }
+
+  _podiumDone() {
+    this.hud.show(true);
     this._showResults();
   }
 
   _showResults() {
     this._bankCoins();
+    if (this.podium.active) return; // the podium shows results when it's done
     this.results.show(true);
     this._refreshResults();
   }
@@ -669,8 +696,8 @@ class Game {
       }
     } else if (msg.t === 'over') {
       this.race.state = 'done';
-      if (!this.localKart?.finished) this.audio.playMenu(2);
-      this._showResults();
+      if (!this.localKart?.finished) this.audio.playAfterRace(2);
+      this._startPodium();
     }
   }
 
@@ -723,7 +750,10 @@ class Game {
     }
 
     this.particles.update(dt);
-    if (this.garageUI.visible) {
+    if (this.podium.active) {
+      this.podium.update(dt, time);
+      this.kartRenderer.update(this.podium.list, 0, dt);
+    } else if (this.garageUI.visible) {
       this._updateShowroom(time);
       this.kartRenderer.update(this._showroomList, 0, dt);
     } else {
@@ -732,7 +762,9 @@ class Game {
     this.items.render(time, this.karts);
 
     const lk = this.localKart;
-    if (this.garageUI.visible) {
+    if (this.podium.active) {
+      // camera driven by the ceremony
+    } else if (this.garageUI.visible) {
       this.renderer.updateShowroomCamera(time, SHOWROOM.x, SHOWROOM.y, SHOWROOM.z);
     } else if (this.inRace && lk) {
       const zoom = 1 + (lk.megaScale - 1) * 0.55;

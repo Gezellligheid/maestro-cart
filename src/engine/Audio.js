@@ -5,6 +5,9 @@ import music1Url from '../../sound_effects/track1_music.mp3';
 import music2Url from '../../sound_effects/track2_music.mp3';
 import music3Url from '../../sound_effects/track3_music.mp3';
 import menuUrl from '../../sound_effects/menu_screen.mp3';
+import afterRaceUrl from '../../sound_effects/after_race.mp3';
+
+const LOOPS = { menu: menuUrl, after: afterRaceUrl };
 
 const SETTINGS_KEY = 'mkbros:audio';
 const MUSIC_BASE = 0.45; // music sits under the effects at 100%
@@ -32,8 +35,8 @@ export class Audio {
       if (saved) for (const k of Object.keys(this.settings)) if (typeof saved[k] === typeof this.settings[k]) this.settings[k] = saved[k];
     } catch { /* storage unavailable */ }
     this.musicEl = null;
-    this.musicIndex = -1; // current track: 0..2 race music, 'menu' for the menu loop
-    this.wantMenu = false; // menu music requested before audio was unlocked
+    this.musicIndex = -1; // current track: 0..2 race music, 'menu' / 'after' loops
+    this.wantLoop = null; // loop requested before audio was unlocked
     this._unlock = () => this.init();
     window.addEventListener('pointerdown', this._unlock, { once: false });
     window.addEventListener('keydown', this._unlock, { once: false });
@@ -63,7 +66,7 @@ export class Audio {
     this.ctx.createMediaElementSource(this.musicEl).connect(this.musicFade);
 
     for (const [name, url] of Object.entries(SFX)) this._load(name, url);
-    if (this.wantMenu) this.playMenu(1.5);
+    if (this.wantLoop) this._playLoop(this.wantLoop, 1.5);
     window.removeEventListener('pointerdown', this._unlock);
     window.removeEventListener('keydown', this._unlock);
   }
@@ -134,22 +137,32 @@ export class Audio {
 
   /** Race music for a circuit. */
   startMusic(index) {
-    this.wantMenu = false;
+    this.wantLoop = null;
     if (!this.ctx || !this.musicEl) return;
     const i = ((index % MUSIC.length) + MUSIC.length) % MUSIC.length;
     this._playTrack(i, MUSIC[i], 0);
   }
 
-  /**
-   * Looping menu music (menu, lobby, garage and between races). Fades out whatever is playing,
-   * then fades the menu track in. Queued until the first user gesture unlocks audio.
-   */
+  /** Menu loop: main menu and the room lobby. */
   playMenu(fadeIn = 2) {
-    this.wantMenu = true;
+    this._playLoop('menu', fadeIn);
+  }
+
+  /** After-race loop: podium, results and the garage between races. */
+  playAfterRace(fadeIn = 2) {
+    this._playLoop('after', fadeIn);
+  }
+
+  /**
+   * Switch to a looping track: fades out whatever is playing, then fades the loop in.
+   * Queued until the first user gesture unlocks audio.
+   */
+  _playLoop(key, fadeIn = 2) {
+    this.wantLoop = key;
     if (!this.ctx || !this.musicEl) return;
-    if (this.musicIndex === 'menu' && !this.musicEl.paused && !this._musicStopping) return; // already on
-    const switchNow = () => this._playTrack('menu', menuUrl, fadeIn);
-    if (!this.musicEl.paused && this.musicIndex !== 'menu') {
+    if (this.musicIndex === key && !this.musicEl.paused && !this._musicStopping) return; // already on
+    const switchNow = () => this._playTrack(key, LOOPS[key], fadeIn);
+    if (!this.musicEl.paused && this.musicIndex !== key) {
       this.stopMusic(0.6);
       this._musicSwitch = setTimeout(switchNow, 650);
     } else {
@@ -159,7 +172,7 @@ export class Audio {
   }
 
   stopMusic(fade = 1) {
-    this.wantMenu = false;
+    this.wantLoop = null;
     clearTimeout(this._musicSwitch);
     if (!this.ctx || !this.musicEl || this.musicEl.paused) return;
     this._musicStopping = true;

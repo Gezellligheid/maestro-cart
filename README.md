@@ -31,6 +31,8 @@ public broker handles signalling only; gameplay traffic is direct WebRTC.
   menu resets it. CPU karts get upgrades as rounds progress.
 - **CPU racers**: in a room the host fills empty grid slots with CPU karts (adjustable in the lobby,
   default: fill all 8 slots). The host simulates them and streams their state like any kart.
+- **Podium**: when a race fully finishes, a podium ceremony reveals 3rd, 2nd and 1st: each kart
+  spins onto its step with confetti, then the results screen follows (Continue skips it).
 - **Ready-up**: in a room every player marks Ready in the lobby and again between rounds; the
   race starts when everyone is ready (the host can also skip the wait).
 - **Style parts** are previewed on the showroom kart when clicked and only bought via the Buy button.
@@ -42,7 +44,8 @@ public broker handles signalling only; gameplay traffic is direct WebRTC.
   shrinks everyone else), rocket (last places: 3.5 s autopilot at 1.6× speed, bowls karts over) and
   the rare Mega Mushroom (3× size for 10 s).
 - **Audio**: `sound_effects/` holds the countdown, item-roulette, race-end jingle, the menu loop
-  (menu, lobby, garage and between races) and three race music
+  (main menu and room lobby), an after-race loop (podium, results, garage between races) and three
+  race music
   tracks (one per circuit). Settings (gear button or Esc) has master/music/effects volume; M mutes.
 
 ## Architecture

@@ -138,6 +138,13 @@
       <div id="hud-stats" class="absolute bottom-1 left-1/2 -translate-x-1/2 font-mono text-[10px] text-white/40"></div>
     </div>
 
+    <!-- Podium ceremony -->
+    <div id="podium-ui" class="pointer-events-none fixed inset-0 z-40 hidden">
+      <div id="podium-title" class="title absolute left-1/2 top-6 -translate-x-1/2 text-center text-5xl sm:text-6xl">Podium</div>
+      <div id="podium-names" class="absolute bottom-8 left-1/2 flex -translate-x-1/2 items-end gap-3"></div>
+      <button id="btn-podium-skip" class="btn btn-ghost pointer-events-auto absolute bottom-6 right-6 text-sm"><i data-lucide="check"></i>Continue</button>
+    </div>
+
     <!-- Results (between rounds) -->
     <div id="results" class="fixed inset-0 z-40 hidden place-items-center overflow-y-auto bg-black/40 p-4 backdrop-blur-sm">
       <div class="panel w-full max-w-md p-6 sm:p-8">
