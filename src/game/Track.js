@@ -6,7 +6,7 @@ import { THEMES, rainbowColor, buildScenery, buildGrandstand, buildTireStacks, b
 const MOVER_KIND = { meadow: 'cow', desert: 'tumbleweed', snow: 'snowball', mushroom: 'hopper', beach: 'crab', volcano: 'firebar', ghost: 'ghost', rainbow: 'star' };
 const WATER_THEMES = new Set(['meadow', 'mushroom', 'beach', 'ghost']);
 
-const S = 720; // centre-line samples
+const S = 1080; // centre-line samples (~2 m apart)
 const BASE_WIDTH = 9; // road half-width where width is pinned (start, bridges, tunnels)
 const WIDTH_VAR = 1.6; // +/- half-width variation elsewhere
 const MAX_HALF_WIDTH = BASE_WIDTH + WIDTH_VAR;
@@ -15,9 +15,9 @@ const BARRIER_GAP = 1.0; // curb edge → barrier
 const MAX_BARRIER = MAX_HALF_WIDTH + CURB_WIDTH + BARRIER_GAP;
 const EDGE_STD = BASE_WIDTH + CURB_WIDTH + BARRIER_GAP + 0.7; // deck edge where width is pinned
 const BARRIER_STEP = 3; // samples per barrier segment
-const CHECKPOINTS = 12;
+const CHECKPOINTS = 18; // one every 60 samples
 const SHORTCUT_HALF = 3.4; // dirt shortcut half-width
-const GROUND_SIZE = 900;
+const GROUND_SIZE = 1400;
 const OVERPASS_RISE = 7.5;
 const BRIDGE_RISE = 5.5;
 
@@ -25,7 +25,7 @@ const BRIDGE_RISE = 5.5;
 const CLASSIC_LAYOUT = [
   [0, -120], [70, -122], [120, -95], [130, -40], [95, -5], [50, 5], [35, 45], [65, 85],
   [55, 125], [5, 135], [-45, 112], [-60, 65], [-105, 45], [-130, -5], [-115, -70], [-65, -112],
-].map(([x, z]) => [x * 1.35, z * 1.35]);
+].map(([x, z]) => [x * 2.2, z * 2.2]);
 
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 const circ = (i) => ((i % S) + S) % S;
@@ -196,9 +196,9 @@ export class Track {
    * the corners. This produces real straights, 90° corners, U-shaped hairpins and notches.
    */
   _gridLayout(rand) {
-    const cols = 3 + Math.floor(rand() * 3); // 3..5
-    const rows = 2 + Math.floor(rand() * 3); // 2..4
-    const cell = 58 + rand() * 24;
+    const cols = 4 + Math.floor(rand() * 3); // 4..6
+    const rows = 3 + Math.floor(rand() * 2); // 3..4
+    const cell = 100 + rand() * 30;
     const key = (x, y) => x + ',' + y;
 
     const target = Math.max(3, Math.round(cols * rows * (0.45 + rand() * 0.35)));
@@ -300,8 +300,8 @@ export class Track {
 
   /** Figure-8 (lemniscate) with uneven lobes; the crossing becomes an overpass. */
   _figure8Layout(rand) {
-    const A = 150 + rand() * 70;
-    const B = 80 + rand() * 45;
+    const A = 245 + rand() * 90;
+    const B = 125 + rand() * 60;
     const lobeL = 0.7 + rand() * 0.45; // left lobe scale
     const n = 18;
     const pts = [];
@@ -325,11 +325,11 @@ export class Track {
    * sweeping return leg back to the start (think of the hairpin climbs on classic kart tracks).
    */
   _switchbackLayout(rand) {
-    const legs = 3;
+    const legs = rand() < 0.5 ? 3 : 5; // odd, so the last leg heads away from the start
     const r = 28 + rand() * 6; // hairpin radius
     const spacing = r * 2;
-    const L = 110 + rand() * 70;
-    const R2 = 82 + rand() * 20; // return-leg clearance
+    const L = legs === 3 ? 230 + rand() * 80 : 170 + rand() * 60;
+    const R2 = 100 + rand() * 30; // return-leg clearance
     const pts = [];
     for (let k = 0; k < legs; k++) {
       const z = k * spacing;
@@ -347,7 +347,7 @@ export class Track {
         pts.push([x1, z + spacing]);
       }
     }
-    // After three legs we're at (L, top) heading +x: sweep round the right and bottom.
+    // After the last leg we're at (L, top) heading +x: sweep round the right and bottom.
     const top = (legs - 1) * spacing;
     pts.push([L + R2 * 0.6, top + 12]);
     pts.push([L + R2, top * 0.5]);
@@ -367,8 +367,8 @@ export class Track {
 
   /** Organic loop: points at increasing angles with strongly varying radii (bays, bulges, pinches). */
   _randomLayout(rand) {
-    const n = 11 + Math.floor(rand() * 6);
-    const baseR = 130 + rand() * 50;
+    const n = 14 + Math.floor(rand() * 7);
+    const baseR = 210 + rand() * 70;
     const sx = 0.7 + rand() * 0.6;
     const sz = 0.7 + rand() * 0.45;
     const radii = [];
@@ -437,7 +437,7 @@ export class Track {
    */
   _isValid(rand) {
     this.crossings = [];
-    if (this.length < 700 || this.length > 1650) return false;
+    if (this.length < 1450 || this.length > 2600) return false;
     const seg = this.segmentLength;
     const half = GROUND_SIZE / 2 - 45;
     for (let i = 0; i < S; i++) {
@@ -534,7 +534,7 @@ export class Track {
     reserve(startA - S, startB - S);
     // Item box rows: roughly one every 200 m (4–7 per lap), spread around the lap with a little
     // jitter and a random formation each. Reserved so jumps and tunnels keep clear of them.
-    const rowCount = Math.max(4, Math.min(7, Math.round(this.length / 200)));
+    const rowCount = Math.max(6, Math.min(10, Math.round(this.length / 210)));
     const skip = Math.ceil(80 / seg), tail = Math.ceil(40 / seg);
     const usable = S - skip - tail;
     const formations = ['line4', 'line5', 'line3', 'stagger', 'pairs'];
@@ -581,7 +581,7 @@ export class Track {
     if (!t.space) place(rand() < 0.5 ? 1 : rand() < 0.5 ? 2 : 0, 75, 0.8, this.tunnels, {}, TUNNEL_HILL.width + MAX_BARRIER + 3);
     place(range(t.jumps), 11, 0.25, this.jumps, {});
     // Moving hazards (cows, snowballs, fire bars…) on fairly straight bits.
-    place(2 + Math.floor(rand() * 3), 10, 0.5, this.movers, { kind: MOVER_KIND[t.id] });
+    place(3 + Math.floor(rand() * 4), 10, 0.5, this.movers, { kind: MOVER_KIND[t.id] });
     for (const m of this.movers) {
       m.i = Math.round((m.a + m.b) / 2);
       m.period = 3 + rand() * 2.5;
@@ -864,7 +864,7 @@ export class Track {
   _buildGround() {
     const t = this.theme;
     const size = GROUND_SIZE;
-    const seg = 100;
+    const seg = 140;
     const geo = new THREE.PlaneGeometry(size, size, seg, seg);
     geo.rotateX(-Math.PI / 2);
     const rand = mulberry32(this.seed ^ 0x9e3779b9);
@@ -1609,8 +1609,8 @@ export class Track {
     // Random ground spot `minD..maxD` metres beyond the barriers, clear of features/ocean.
     const spot = (minD, maxD) => {
       for (let tries = 0; tries < 12; tries++) {
-        const x = (rand() - 0.5) * 820;
-        const z = (rand() - 0.5) * 820;
+        const x = (rand() - 0.5) * (GROUND_SIZE - 80);
+        const z = (rand() - 0.5) * (GROUND_SIZE - 80);
         this.terrainAt(x, z, tr);
         if (tr.d < minD || tr.d > maxD) continue;
         if (this._nearFeature(x, z)) continue;
@@ -1639,7 +1639,7 @@ export class Track {
       const c = new THREE.Color();
       for (let k = 0; k < 28; k++) {
         const ang = (k / 28) * Math.PI * 2 + rand() * 0.1;
-        const r = 380 + rand() * 50;
+        const r = GROUND_SIZE / 2 + 30 + rand() * 50;
         const h = 60 + rand() * 90;
         const w = 50 + rand() * 40;
         q.setFromAxisAngle(up, rand() * Math.PI);
@@ -1706,7 +1706,7 @@ export class Track {
     const rand = mulberry32(this.seed ^ 0xc01c0);
     const spots = [];
     const tmp = { x: 0, z: 0 };
-    const TOTAL = 30;
+    const TOTAL = 45;
     const boxRows = this.boxRows.map((r) => r.i);
     for (const sc of this.shortcuts) {
       for (const f of [0.35, 0.5, 0.65]) {

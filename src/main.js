@@ -1234,7 +1234,7 @@ class Game {
       if (this.results.visible && this.race.state !== 'done') this._refreshResultsThrottled(dt);
     } else {
       const b = this.track.bounds;
-      this.renderer.updateOrbitCamera(time, b.cx, b.cz, 230);
+      this.renderer.updateOrbitCamera(time, b.cx, b.cz, Math.max(230, Math.max(b.maxX - b.minX, b.maxZ - b.minZ) * 0.6));
     }
 
     if (this.inRace && !this.podium.active) this.emotes.update(dt, this.kartBySlot, this.renderer.camera);

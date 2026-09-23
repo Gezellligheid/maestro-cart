@@ -4,7 +4,7 @@ import { ITEM, ITEMS, KART } from './constants.js';
 
 const SHELL_CAP = 24;
 const RED_CAP = 16;
-const BOX_CAP = 48; // max item boxes per track (rows × formation)
+const BOX_CAP = 64; // max item boxes per track (rows × formation)
 const OIL_CAP = 12;
 const PAD_CAP = 8;
 const CLOUD_CAP = 8;

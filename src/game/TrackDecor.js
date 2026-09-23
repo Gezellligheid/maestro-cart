@@ -237,7 +237,7 @@ export function buildScenery({ track, theme, rand, group, renderer, spot }) {
   // Plants
   const plant = theme.plant ? plantGeometry(theme.plant) : null;
   if (plant) {
-    const count = theme.plantCount;
+    const count = Math.round(theme.plantCount * 1.8); // big maps need more greenery
     const fixed = plant.fixed ? instanced(renderer, plant.fixed, count) : null;
     const tint = plant.tint ? instanced(renderer, plant.tint, count) : null;
     for (let n = 0, tries = 0; n < count && tries < count * 20; tries++) {
@@ -262,8 +262,9 @@ export function buildScenery({ track, theme, rand, group, renderer, spot }) {
 
   // Rocks
   if (theme.rockCount > 0) {
-    const rocks = instanced(renderer, new THREE.DodecahedronGeometry(1, 0), theme.rockCount, renderer.toon({ color: 0xffffff }));
-    for (let n = 0; n < theme.rockCount; n++) {
+    const rockCount = Math.round(theme.rockCount * 1.8);
+    const rocks = instanced(renderer, new THREE.DodecahedronGeometry(1, 0), rockCount, renderer.toon({ color: 0xffffff }));
+    for (let n = 0; n < rockCount; n++) {
       const s = spot(3, 280);
       if (!s) continue;
       const sc = 0.6 + rand() * 2.2;
