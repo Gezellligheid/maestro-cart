@@ -428,6 +428,11 @@ export class Kart {
     const target = this.megaTimer > 0 ? MEGA.scale : this.shrinkTimer > 0 ? ITEMS.shrinkScale : 1;
     this.megaScale += (target - this.megaScale) * Math.min(1, dt * 3);
     if (Math.abs(target - this.megaScale) < 0.01) this.megaScale = target;
+    const ghost = this.megaTimer > 0;
+    if (ghost !== this._ghost) {
+      this._ghost = ghost;
+      this.collider.setCollisionGroups(this.physics.kartGroups(!ghost));
+    }
     const r = KART.radius * this.megaScale;
     if (Math.abs(r - this.radius) > 0.005) {
       this.radius = r;

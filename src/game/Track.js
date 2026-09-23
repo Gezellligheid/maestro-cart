@@ -631,13 +631,13 @@ export class Track {
     blurCircular(this.slope, 6, 2); // build the bank up gradually into and out of the corner
     for (let i = 0; i < S; i++) this.slope[i] *= bankMask[i];
 
-    // Boost pads only on straights: no bend or banking within ~30 m either side, so a boost
-    // never throws you into a corner.
+    // Boost pads only on straights: the pad and the next ~40 m must be free of bends and
+    // banking, so a boost never throws you into a corner (a pad right after a corner is fine).
     const padLen = Math.max(3, Math.round(6 / seg));
-    const margin = Math.ceil(30 / seg);
+    const ahead = Math.ceil(40 / seg);
     const straight = (a, b) => {
       const ref = this.yaw[circ(a)];
-      for (let i = a - margin; i <= b + margin; i++) {
+      for (let i = a; i <= b + ahead; i++) {
         if (Math.abs(wrap(this.yaw[circ(i)] - ref)) > 0.08) return false; // no bend before or after
         if (Math.abs(this.slope[circ(i)]) > 0.02) return false; // no banking (= no corner)
       }

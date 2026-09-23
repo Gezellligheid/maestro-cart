@@ -95,6 +95,14 @@ export class Physics {
     return body;
   }
 
+  /**
+   * Collision groups for a kart. A Mega kart doesn't physically touch other karts (it would
+   * roll up onto them); squashing is handled in game code instead.
+   */
+  kartGroups(collideWithKarts) {
+    return groups(COLLISION.KART, collideWithKarts ? ALL : ALL & ~COLLISION.KART);
+  }
+
   removeBody(body) {
     if (body) this.world.removeRigidBody(body);
   }
