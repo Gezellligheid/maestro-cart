@@ -27,7 +27,7 @@ import {
 
 const COUNTDOWN_MS = 3600;
 const RACE_TIMEOUT_AFTER_FIRST_MS = 30000; // stragglers get a DNF this long after the first human finishes
-const ITEM_EVENTS = new Set(['box', 'coin', 'spawn', 'hit', 'despawn', 'zap']);
+const ITEM_EVENTS = new Set(['box', 'coin', 'spawn', 'hit', 'despawn', 'zap', 'pad', 'slip', 'cloud', 'steal']);
 const randomSeed = () => (Math.random() * 0xffffffff) >>> 0;
 const SHOWROOM = { x: 0, y: 400, z: 0 }; // garage podium floats high above the map
 
@@ -123,6 +123,13 @@ class Game {
     const items = this.items;
     items.getKart = (slot) => this.kartBySlot[slot];
     items.getKarts = () => this.karts;
+    items.onLocalEffect = (k, kind) => {
+      if (k !== this.localKart) return;
+      const text = { slip: 'Oil slick!', confused: 'Storm cloud! Steering reversed', robbed: 'Your item was stolen!', stole: 'Stole an item!' }[kind];
+      if (text) this.hud.subtitle(text, 1.6);
+      if (kind === 'slip' || kind === 'confused') this.renderer.addShake(0.4);
+      this.audio.blip(kind === 'stole' ? 'shield' : kind === 'robbed' ? 'hit' : 'zap');
+    };
     items.onZap = (slot) => {
       this.audio.blip('zap');
       const lk = this.localKart;
@@ -414,10 +421,10 @@ class Game {
     const karts = this.karts;
     for (let i = 0; i < karts.length; i++) {
       const k = karts[i];
-      if (!k.simulated || k.bumpCooldown > 0) continue;
+      if (!k.simulated || k.bumpCooldown > 0 || k.ghostTimer > 0) continue;
       for (let j = 0; j < karts.length; j++) {
         const o = karts[j];
-        if (o === k) continue;
+        if (o === k || o.ghostTimer > 0) continue;
         const dx = k.x - o.x, dz = k.z - o.z;
         const reach = k.radius + o.radius + 0.15;
         const d2 = dx * dx + dz * dz;
@@ -604,7 +611,8 @@ class Game {
       k.netZ = rec.z;
       k.applyRemoteFlags(rec.flags, rec.driftTier & 15, rec.steer);
       k.applyRemoteExtras(rec.driftTier >> 4);
-      k.item = rec.item;
+      k.item = rec.item & 15;
+      k.applyRemoteItemBits(rec.item >> 4);
       k.rollTimer = rec.flags & FLAG.ROLLING ? 0.1 : 0;
       k.progress = rec.progress;
       k.lap = rec.lap;

@@ -11,7 +11,13 @@ ICONS[ITEM.RED_SHELL] = ICONS[ITEM.SHELL].replace('#2ec27e', '#e63946').replaceA
 ICONS[ITEM.LIGHTNING] = `<svg viewBox="0 0 64 64"><path d="M38 4L12 36h16l-6 24 28-34H34z" fill="#ffd23f" stroke="#8a6d00" stroke-width="3" stroke-linejoin="round"/></svg>`;
 ICONS[ITEM.SHIELD] = `<svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="26" fill="#7fdcff" fill-opacity="0.35" stroke="#2a9df4" stroke-width="4"/><path d="M18 22a16 16 0 0 1 14-8" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"/><circle cx="32" cy="36" r="8" fill="#2a9df4"/></svg>`;
 ICONS[ITEM.MAGNET] = `<svg viewBox="0 0 64 64"><path d="M14 10h12v22a6 6 0 0 0 12 0V10h12v22a18 18 0 0 1-36 0z" fill="#e63946" stroke="#7a1017" stroke-width="3"/><path d="M14 10h12v8H14zM38 10h12v8H38z" fill="#dfe6ee" stroke="#7a1017" stroke-width="3"/><circle cx="52" cy="50" r="5" fill="#ffd23f" stroke="#8a6d00" stroke-width="2"/></svg>`;
-const ROLL_ORDER = [ITEM.SHELL, ITEM.BANANA, ITEM.MUSHROOM, ITEM.RED_SHELL, ITEM.SHIELD, ITEM.MAGNET, ITEM.LIGHTNING, ITEM.MEGA];
+ICONS[ITEM.TRIPLE] = `<svg viewBox="0 0 64 64"><g transform="translate(-10 8) scale(0.62)">${ICONS[ITEM.MUSHROOM].replace(/<\/?svg[^>]*>/g, '')}</g><g transform="translate(14 8) scale(0.62)">${ICONS[ITEM.MUSHROOM].replace(/<\/?svg[^>]*>/g, '')}</g><g transform="translate(2 -8) scale(0.62)">${ICONS[ITEM.MUSHROOM].replace(/<\/?svg[^>]*>/g, '')}</g></svg>`;
+ICONS[ITEM.OIL] = `<svg viewBox="0 0 64 64"><ellipse cx="32" cy="46" rx="26" ry="10" fill="#1b1a26" stroke="#000" stroke-width="2"/><ellipse cx="24" cy="44" rx="9" ry="3" fill="#5b4b8a" opacity="0.8"/><path d="M32 6c7 10 12 17 12 24a12 12 0 0 1-24 0c0-7 5-14 12-24z" fill="#2b2838" stroke="#000" stroke-width="3"/><path d="M27 26c0 4 2 7 5 8" fill="none" stroke="#8b7fd1" stroke-width="3" stroke-linecap="round"/></svg>`;
+ICONS[ITEM.GHOST] = `<svg viewBox="0 0 64 64"><path d="M12 56V28a20 20 0 0 1 40 0v28l-7-6-6 6-7-6-7 6-6-6z" fill="#f5f3ff" stroke="#6b5fa8" stroke-width="3" stroke-linejoin="round"/><circle cx="25" cy="28" r="4" fill="#1b1530"/><circle cx="39" cy="28" r="4" fill="#1b1530"/><ellipse cx="32" cy="40" rx="4" ry="5" fill="#1b1530"/></svg>`;
+ICONS[ITEM.ROCKET] = `<svg viewBox="0 0 64 64"><path d="M8 40l10-4v-8l-10-4z" fill="#ffb703"/><path d="M18 22h26c8 0 14 5 14 10s-6 10-14 10H18z" fill="#2b2d42" stroke="#111" stroke-width="3"/><circle cx="46" cy="30" r="3.5" fill="#fff"/><circle cx="47" cy="30" r="1.8" fill="#111"/><path d="M22 22l-4-10h10l6 10zM22 42l-4 10h10l6-10z" fill="#e63946" stroke="#111" stroke-width="2"/></svg>`;
+ICONS[ITEM.PAD] = `<svg viewBox="0 0 64 64"><rect x="10" y="8" width="44" height="48" rx="6" fill="#ff7f11" stroke="#9a3f00" stroke-width="3"/><path d="M18 42l14-10 14 10M18 30l14-10 14 10" fill="none" stroke="#ffe156" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+ICONS[ITEM.CLOUD] = `<svg viewBox="0 0 64 64"><path d="M16 38a10 10 0 0 1 2-20 14 14 0 0 1 26-2 10 10 0 0 1 6 19z" fill="#5b6275" stroke="#2b2f3a" stroke-width="3"/><path d="M34 34l-6 12h7l-4 12 12-16h-7l4-8z" fill="#ffd23f" stroke="#8a6d00" stroke-width="2" stroke-linejoin="round"/></svg>`;
+const ROLL_ORDER = [ITEM.SHELL, ITEM.BANANA, ITEM.MUSHROOM, ITEM.RED_SHELL, ITEM.SHIELD, ITEM.OIL, ITEM.MAGNET, ITEM.TRIPLE, ITEM.PAD, ITEM.GHOST, ITEM.CLOUD, ITEM.LIGHTNING, ITEM.ROCKET, ITEM.MEGA];
 const $ = (id) => document.getElementById(id);
 
 /**
@@ -176,6 +182,16 @@ export class HUD {
       el.itemIcon.innerHTML = ICONS[kart.item] || '';
       el.item.classList.remove('rolling');
     }
+    // Triple mushroom charges badge.
+    if (!this._usesEl) {
+      this._usesEl = document.createElement('span');
+      this._usesEl.className = 'absolute -bottom-2 -right-2 rounded-full bg-amber-300 px-2 text-sm font-black text-[#1b1400] shadow';
+      el.item.style.position = 'relative';
+      el.item.appendChild(this._usesEl);
+    }
+    const uses = kart.item === ITEM.TRIPLE && kart.rollTimer <= 0 ? `×${kart.itemUses}` : '';
+    this._set('uses', this._usesEl, uses);
+    this._usesEl.style.display = uses ? '' : 'none';
 
     if (this._centerTimer > 0) {
       this._centerTimer -= dt;

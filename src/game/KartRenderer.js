@@ -150,6 +150,12 @@ export class KartRenderer {
       this._kartMat.compose(this._p.set(x, y + bob, z), this._q, this._s);
 
       const base = i * PARTS_PER_KART;
+      // Ghosts flicker in and out.
+      const hidden = k.ghostTimer > 0 && Math.floor(performance.now() / 70) % 3 !== 0;
+      if (hidden) {
+        for (let p = 0; p < PARTS_PER_KART; p++) this.batch.setVisibleAt(this.instances[base + p], false);
+        continue;
+      }
       const paint = this._c.setHex(look.color);
       const lift = wheel.radius - 0.3;
 
@@ -234,6 +240,16 @@ export class KartRenderer {
     if (k.megaTimer > 0) {
       const a = Math.random() * Math.PI * 2;
       p.spawn(x + Math.cos(a) * 1.6 * scale, y + Math.random() * 2 * scale, z + Math.sin(a) * 1.6 * scale, 0, 2.5, 0, 0.5, 0.35, Math.random() < 0.5 ? 0xffd23f : 0xff595e, 0);
+    }
+    if (k.rocketTimer > 0) {
+      // Rocket: big flame trail and speed streaks.
+      for (let n = 0; n < 3; n++) {
+        p.spawn(x - sin * 1.8 * scale + (Math.random() - 0.5) * 0.6, y + 0.6 * scale + (Math.random() - 0.5) * 0.5, z - cos * 1.8 * scale + (Math.random() - 0.5) * 0.6,
+          -sin * 14, (Math.random() - 0.3) * 2, -cos * 14, 0.3, 0.7, n === 0 ? 0xffffff : Math.random() < 0.5 ? 0xff5a1f : 0xffb703, 0);
+      }
+    }
+    if (k.slipTimer > 0 && k.grounded) {
+      p.spawn(backX, y + 0.2, backZ, (Math.random() - 0.5) * 3, 1 + Math.random(), (Math.random() - 0.5) * 3, 0.5, 0.35, 0x2a2438, -6);
     }
     if (k.magnetTimer > 0) {
       // Blue sparks drawn in toward the kart.

@@ -54,6 +54,11 @@ export class Kart {
     this.shieldTimer = 0;
     this.shieldPopped = false; // one-frame flag for the pop effect
     this.magnetTimer = 0;
+    this.itemUses = 0; // triple mushroom charges
+    this.slipTimer = 0; // oil slick
+    this.confusedTimer = 0; // storm cloud: steering reversed
+    this.ghostTimer = 0; // intangible, can't be hit
+    this.rocketTimer = 0; // autopilot rocket
     this.megaRemote = false;
     this.steerInput = 0; // smoothed steering
     this.bumpX = 0; this.bumpZ = 0; // knock-back velocity from kart collisions
@@ -146,6 +151,10 @@ export class Kart {
     if (this.shrinkTimer > 0) this.shrinkTimer -= dt;
     if (this.shieldTimer > 0) this.shieldTimer -= dt;
     if (this.magnetTimer > 0) this.magnetTimer -= dt;
+    if (this.slipTimer > 0) this.slipTimer -= dt;
+    if (this.confusedTimer > 0) this.confusedTimer -= dt;
+    if (this.ghostTimer > 0) this.ghostTimer -= dt;
+    if (this.rocketTimer > 0) this.rocketTimer -= dt;
     this._updateScale(dt);
 
     // Ground contact: within reach of the surface (slopes/banks included) and not mid-hop.
@@ -188,12 +197,23 @@ export class Kart {
     }
     if (this.megaTimer > 0) maxSpeed *= 1.12;
     else if (this.shrinkTimer > 0) maxSpeed *= ITEMS.shrinkSpeed;
+    if (this.rocketTimer > 0) maxSpeed = C.maxSpeed * this.speedScale * ITEMS.rocketSpeed;
 
     let throttle = this.controlsEnabled ? input.throttle : 0;
     let steer = this.controlsEnabled ? input.steer : 0;
     let driftHeld = this.controlsEnabled && input.drift;
     const driftPressed = this.controlsEnabled && input.driftPressed;
     if (this.finished && this.control === 'local') throttle = Math.min(throttle, 0.4);
+    if (this.confusedTimer > 0) steer = -steer; // storm cloud scrambles your steering
+    if (this.rocketTimer > 0) {
+      // Rocket autopilot: follow the racing line flat out.
+      const p = this._pos;
+      this.track.pointAt(this.trackIdx + 14, 0, 0, p);
+      const want = Math.atan2(p.x - t.x, p.z - t.z);
+      steer = clamp(-wrapAngle(want - this.yaw) * 3, -1, 1);
+      throttle = 1;
+      driftHeld = false;
+    }
 
     if (this.spinTimer > 0) {
       this.spinTimer -= dt;
@@ -274,7 +294,13 @@ export class Kart {
       }
       this.yaw = wrapAngle(this.yaw + yawRate * dt);
 
-      const grip = (this.drifting ? C.driftGrip : this.offroad ? C.offroadGrip : C.grip) * M.grip * iceGrip;
+      const slipping = this.slipTimer > 0;
+      if (slipping) {
+        // Oil: tail wags side to side and you lose a little speed.
+        lat += Math.sin(this.slipTimer * 14) * 18 * dt;
+        fwd *= Math.exp(-0.5 * dt);
+      }
+      const grip = (this.drifting ? C.driftGrip : this.offroad ? C.offroadGrip : C.grip) * M.grip * iceGrip * (slipping ? 0.1 : 1);
       lat *= Math.exp(-grip * dt);
     } else {
       // Airborne: limited steering, keep momentum. Drifts can be charged mid-hop.
@@ -317,6 +343,7 @@ export class Kart {
       this.rollTimer -= dt;
       if (this.rollTimer <= 0) {
         this.item = this.pendingItem;
+        this.itemUses = this.item === ITEM.TRIPLE ? 3 : 1;
         this.pendingItem = ITEM.NONE;
       }
     }
@@ -356,7 +383,7 @@ export class Kart {
   }
 
   spinOut() {
-    if (this.spinTimer > 0 || this.megaTimer > 0) return false;
+    if (this.spinTimer > 0 || this.megaTimer > 0 || this.ghostTimer > 0 || this.rocketTimer > 0) return false;
     if (this.shieldTimer > 0) {
       // The bubble absorbs the hit.
       this.shieldTimer = 0;
@@ -386,8 +413,66 @@ export class Kart {
   }
 
   /** Lightning strike from another kart. Returns true if it took effect. */
+  /** Oil slick: brief loss of grip. */
+  slip() {
+    if (this.ghostTimer > 0 || this.rocketTimer > 0 || this.megaTimer > 0 || this.slipTimer > 0) return false;
+    if (this.drifting) this._cancelDrift();
+    this.slipTimer = ITEMS.slipDuration;
+    return true;
+  }
+
+  /** Storm cloud: reversed steering. */
+  confuse() {
+    if (this.ghostTimer > 0 || this.rocketTimer > 0) return false;
+    if (this.shieldTimer > 0) { this.shieldTimer = 0; this.shieldPopped = true; return false; }
+    this.confusedTimer = ITEMS.cloudDuration;
+    return true;
+  }
+
+  activateGhost() {
+    this.ghostTimer = ITEMS.ghostDuration;
+  }
+
+  activateRocket() {
+    this.rocketTimer = ITEMS.rocketDuration;
+    this.boostTimer = Math.max(this.boostTimer, 0.3);
+    this.pendingImpulse += 8;
+    this.spinTimer = 0;
+    this.slipTimer = 0;
+    this.shrinkTimer = 0;
+    if (this.drifting) this._cancelDrift();
+  }
+
+  /** Dropped boost pad: same kick as a track pad. */
+  hitPad() {
+    if (this.padCooldown > 0) return false;
+    this.boostTimer = Math.max(this.boostTimer, 0.9);
+    this.pendingImpulse += 5;
+    this.padCooldown = 0.6;
+    return true;
+  }
+
+  /** Put an item straight into the slot (e.g. stolen with Ghost). */
+  setItem(item) {
+    this.item = item;
+    this.itemUses = item === ITEM.TRIPLE ? 3 : 1;
+    this.rollTimer = 0;
+    this.pendingItem = ITEM.NONE;
+  }
+
+  /** Bits sharing the item byte: 1 = rocket, 2 = slipping, 4 = confused (shifted by 4). */
+  get itemBits() {
+    return ((this.rocketTimer > 0 ? 1 : 0) | (this.slipTimer > 0 ? 2 : 0) | (this.confusedTimer > 0 ? 4 : 0)) << 4;
+  }
+
+  applyRemoteItemBits(bits) {
+    this.rocketTimer = bits & 1 ? 1 : 0;
+    this.slipTimer = bits & 2 ? 1 : 0;
+    this.confusedTimer = bits & 4 ? 1 : 0;
+  }
+
   zap() {
-    if (this.megaTimer > 0) return false;
+    if (this.megaTimer > 0 || this.ghostTimer > 0 || this.rocketTimer > 0) return false;
     if (this.shieldTimer > 0) {
       this.shieldTimer = 0;
       this.shieldPopped = true;
@@ -412,7 +497,7 @@ export class Kart {
 
   /** Bits sent alongside the drift tier: 1 = shrunk, 2 = shield, 4 = magnet. */
   get extraBits() {
-    return (this.shrinkTimer > 0 ? 1 : 0) | (this.shieldTimer > 0 ? 2 : 0) | (this.magnetTimer > 0 ? 4 : 0);
+    return (this.shrinkTimer > 0 ? 1 : 0) | (this.shieldTimer > 0 ? 2 : 0) | (this.magnetTimer > 0 ? 4 : 0) | (this.ghostTimer > 0 ? 8 : 0);
   }
 
   applyRemoteExtras(bits) {
@@ -421,14 +506,16 @@ export class Kart {
     if (!shield && this.shieldTimer > 0) this.shieldPopped = true;
     this.shieldTimer = shield ? 1 : 0;
     this.magnetTimer = bits & 4 ? 1 : 0;
+    this.ghostTimer = bits & 8 ? 1 : 0;
   }
 
   /** Smoothly grow/shrink (Mega / Lightning) and resize the physics ball to match. */
   _updateScale(dt) {
-    const target = this.megaTimer > 0 ? MEGA.scale : this.shrinkTimer > 0 ? ITEMS.shrinkScale : 1;
+    const target = this.megaTimer > 0 ? MEGA.scale : this.rocketTimer > 0 ? 1.25 : this.shrinkTimer > 0 ? ITEMS.shrinkScale : 1;
     this.megaScale += (target - this.megaScale) * Math.min(1, dt * 3);
     if (Math.abs(target - this.megaScale) < 0.01) this.megaScale = target;
-    const ghost = this.megaTimer > 0;
+    // Mega, Ghost and Rocket karts don't physically collide with other karts.
+    const ghost = this.megaTimer > 0 || this.ghostTimer > 0 || this.rocketTimer > 0;
     if (ghost !== this._ghost) {
       this._ghost = ghost;
       this.collider.setCollisionGroups(this.physics.kartGroups(!ghost));

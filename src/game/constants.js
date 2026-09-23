@@ -14,8 +14,10 @@ export const ROOM_PREFIX = 'mkbros-v1-';
 
 export const ITEM = Object.freeze({
   NONE: 0, SHELL: 1, BANANA: 2, MUSHROOM: 3, MEGA: 4, RED_SHELL: 5, LIGHTNING: 6, SHIELD: 7, MAGNET: 8,
+  TRIPLE: 9, OIL: 10, GHOST: 11, ROCKET: 12, PAD: 13, CLOUD: 14, // item ids must stay ≤ 15 (packed in 4 bits)
 });
-export const ITEM_NAMES = ['', 'Green Shell', 'Banana', 'Mushroom', 'Mega Mushroom', 'Red Shell', 'Lightning Bolt', 'Bubble Shield', 'Coin Magnet'];
+export const ITEM_NAMES = ['', 'Green Shell', 'Banana', 'Mushroom', 'Mega Mushroom', 'Red Shell', 'Lightning Bolt', 'Bubble Shield', 'Coin Magnet',
+  'Triple Mushroom', 'Oil Slick', 'Ghost', 'Rocket', 'Boost Pad', 'Storm Cloud'];
 
 export const COLLISION = Object.freeze({ WALL: 0x0001, GROUND: 0x0002, KART: 0x0004 });
 
@@ -100,4 +102,12 @@ export const ITEMS = Object.freeze({
   magnetDuration: 8,
   magnetCoinRange: 12,
   magnetBoxRange: 5,
+  oilRadius: 1.9,
+  oilLife: 14,
+  slipDuration: 1.3,
+  ghostDuration: 6,
+  rocketDuration: 3.5,
+  rocketSpeed: 1.6, // top-speed multiplier while riding the rocket
+  cloudDuration: 4.5,
+  padLife: 25,
 });

@@ -40,7 +40,8 @@ export class KartRecord {
   fromKart(k, time) {
     // Upper nibble of the drift-tier byte carries shrink / shield / magnet state.
     this.slot = k.slot; this.flags = k.flags; this.driftTier = k.driftTier | (k.extraBits << 4);
-    this.item = k.rollTimer > 0 ? 0 : k.item;
+    // Low nibble: held item; high nibble: rocket / slipping / confused flags.
+    this.item = (k.rollTimer > 0 ? 0 : k.item) | k.itemBits;
     this.time = time;
     this.x = k.x; this.y = k.y; this.z = k.z; this.yaw = k.yaw;
     this.vx = k.vx; this.vy = k.vy; this.vz = k.vz;

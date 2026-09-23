@@ -4,6 +4,9 @@ import { ITEM, ITEMS, KART } from './constants.js';
 
 const SHELL_CAP = 24;
 const RED_CAP = 16;
+const OIL_CAP = 12;
+const PAD_CAP = 8;
+const CLOUD_CAP = 8;
 const BANANA_CAP = 32;
 const BOX_SIZE = 1.5;
 const RAINBOW = [0xff595e, 0xffca3a, 0x8ac926, 0x1982c4, 0x6a4c93, 0xff924c];
@@ -85,6 +88,11 @@ export class ItemSystem {
     this.getKarts = () => []; // all karts, for lightning and red-shell targeting
     this.onZap = null; // (userSlot) => void, presentation hook
     this.bananas = new ProjectilePool(ITEM.BANANA, BANANA_CAP);
+    this.oils = new ProjectilePool(ITEM.OIL, OIL_CAP);
+    // Dropped boost pads (plain records, fixed pool).
+    this.dropPads = Array.from({ length: PAD_CAP }, () => ({ active: false, id: 0, x: 0, y: 0, z: 0, yaw: 0, age: 0 }));
+    this.onLocalEffect = null; // (kart, kind) => void, feedback for the local player
+    this._slipCooldown = new Map(); // authority: slot -> seconds until oil can hit again
 
     this._buildMeshes();
     this._m = new THREE.Matrix4();
@@ -151,6 +159,32 @@ export class ItemSystem {
       cylinder(0.08, 0.05, 0.1, 5, 0, 0.12, -0.42, 0x5c3d1e, 0.7, 0, 0),
     ]);
     this.bananaMesh = this._instanced(bananaGeo, toon, BANANA_CAP);
+
+    // Oil slick: dark puddle with a purple sheen.
+    const oilGeo = merge([
+      cylinder(ITEMS.oilRadius, ITEMS.oilRadius, 0.04, 16, 0, 0, 0, 0x14141c),
+      cylinder(ITEMS.oilRadius * 0.55, ITEMS.oilRadius * 0.55, 0.05, 12, 0.3, 0.01, -0.2, 0x3b2f5c),
+      cylinder(0.5, 0.5, 0.06, 10, -0.6, 0.02, 0.5, 0x4a4470),
+    ]);
+    this.oilMesh = this._instanced(oilGeo, toon, OIL_CAP);
+
+    // Dropped boost pad: orange plate with yellow chevrons (points along +z).
+    const padParts = [box(3.6, 0.06, 4.6, 0, 0, 0, 0xff7f11)];
+    for (let k = 0; k < 3; k++) {
+      const z = -1.4 + k * 1.3;
+      padParts.push(box(1.8, 0.08, 0.35, 0.7, 0.01, z, 0xffe156, 0, -0.6, 0));
+      padParts.push(box(1.8, 0.08, 0.35, -0.7, 0.01, z, 0xffe156, 0, 0.6, 0));
+    }
+    this.padMesh = this._instanced(merge(padParts), toon, PAD_CAP);
+
+    // Storm cloud that hovers over a confused kart.
+    const cloudGeo = merge([
+      sphere(1.1, 8, 6, 0, 0, 0, 0x5b6275),
+      sphere(0.9, 8, 6, 0.9, -0.1, 0.2, 0x4b5163),
+      sphere(0.85, 8, 6, -0.9, -0.05, -0.1, 0x535a6d),
+      sphere(0.7, 8, 6, 0.2, 0.45, -0.4, 0x656c80),
+    ]);
+    this.cloudMesh = this._instanced(cloudGeo, toon, CLOUD_CAP);
   }
 
   _instanced(geo, mat, count) {
@@ -173,6 +207,9 @@ export class ItemSystem {
     this.shells.releaseAll();
     this.reds.releaseAll();
     this.bananas.releaseAll();
+    this.oils.releaseAll();
+    for (const p of this.dropPads) p.active = false;
+    this._slipCooldown.clear();
     this.nextId = 1;
   }
 
@@ -183,6 +220,26 @@ export class ItemSystem {
     if (kart.item === ITEM.NONE || kart.rollTimer > 0 || kart.spinTimer > 0) return false;
     const it = kart.item;
     kart.item = ITEM.NONE;
+    if (it === ITEM.TRIPLE) {
+      kart.applyMushroom();
+      kart.itemUses--;
+      if (kart.itemUses > 0) kart.item = ITEM.TRIPLE; // keep the rest in the slot
+      return true;
+    }
+    if (it === ITEM.ROCKET) {
+      kart.activateRocket();
+      return true;
+    }
+    if (it === ITEM.GHOST) {
+      kart.activateGhost();
+      if (this.isAuthority) this._steal(kart.slot);
+      else if (this.onRequest) this.onRequest({ t: 'use', k: it, s: kart.slot });
+      return true;
+    }
+    if (it === ITEM.CLOUD && this.isAuthority) {
+      this._cloud(kart.slot);
+      return true;
+    }
     if (it === ITEM.MUSHROOM) {
       kart.applyMushroom();
       return true;
@@ -218,7 +275,10 @@ export class ItemSystem {
       this._emit({ t: 'zap', s: fromSlot });
       return;
     }
-    if (msg.k !== ITEM.SHELL && msg.k !== ITEM.BANANA && msg.k !== ITEM.RED_SHELL) return;
+    if (msg.k === ITEM.GHOST) { this._steal(fromSlot); return; }
+    if (msg.k === ITEM.CLOUD) { this._cloud(fromSlot); return; }
+    const dropped = [ITEM.SHELL, ITEM.BANANA, ITEM.RED_SHELL, ITEM.OIL, ITEM.PAD];
+    if (!dropped.includes(msg.k)) return;
     this.spawnFromKart(msg.k, fromSlot, +msg.x || 0, +msg.z || 0, +msg.yaw || 0, +msg.spd || 0);
   }
 
@@ -243,12 +303,39 @@ export class ItemSystem {
       const hit = this.physics.castWall(x, this.track.roadY(idx0, this.track.lastLateral) + 0.5, z, sin, cos, 2.4 + ITEMS.shellRadius);
       if (hit) { px = x; pz = z; }
     } else {
-      px = x - sin * 2.2;
-      pz = z - cos * 2.2;
+      // Dropped behind the kart; oil and pads sit a little further back.
+      const back = type === ITEM.PAD ? 5.5 : type === ITEM.OIL ? 3.2 : 2.2;
+      px = x - sin * back;
+      pz = z - cos * back;
     }
     const id = this.nextId;
     this.nextId = this.nextId >= 60000 ? 1 : this.nextId + 1;
+    if (type === ITEM.PAD) {
+      this._emit({ t: 'pad', id, x: px, z: pz, yaw });
+      return;
+    }
     this._emit({ t: 'spawn', k: type, id, o: owner, x: px, z: pz, vx, vz, tg: target });
+  }
+
+  /** Ghost: steal a random rival's item, preferring karts ahead of the thief. */
+  _steal(thiefSlot) {
+    const thief = this.getKart(thiefSlot);
+    const victims = this.getKarts().filter((k) => k !== thief && k.item !== ITEM.NONE && !(k.rollTimer > 0));
+    if (!thief || victims.length === 0) {
+      this._emit({ t: 'steal', from: -1, to: thiefSlot, it: ITEM.NONE });
+      return;
+    }
+    const ahead = victims.filter((k) => k.rank < thief.rank);
+    const pool = ahead.length ? ahead : victims;
+    const v = pool[Math.floor(Math.random() * pool.length)];
+    this._emit({ t: 'steal', from: v.slot, to: thiefSlot, it: v.item });
+  }
+
+  /** Storm cloud: hovers over the leader (never the user). */
+  _cloud(userSlot) {
+    const leader = this.getKarts().find((k) => k.rank === 1 && k.slot !== userSlot && !k.finished)
+      || this.getKarts().find((k) => k.rank === 2 && k.slot !== userSlot && !k.finished);
+    if (leader) this._emit({ t: 'cloud', s: leader.slot, by: userSlot });
   }
 
   // ---------------------------------------------------------------- events
@@ -283,14 +370,14 @@ export class ItemSystem {
         break;
       }
       case 'spawn': {
-        const pool = msg.k === ITEM.SHELL ? this.shells : msg.k === ITEM.RED_SHELL ? this.reds : this.bananas;
+        const pool = msg.k === ITEM.SHELL ? this.shells : msg.k === ITEM.RED_SHELL ? this.reds : msg.k === ITEM.OIL ? this.oils : this.bananas;
         const p = pool.acquire();
         p.active = true;
         p.id = msg.id;
         p.owner = msg.o;
         p.x = msg.x; p.z = msg.z;
         p.idx = this.track.nearestIndex(p.x, p.z, -1);
-        p.y = this.track.roadY(p.idx, this.track.lastLateral) + (msg.k === ITEM.BANANA ? 0.05 : 0.5);
+        p.y = this.track.roadY(p.idx, this.track.lastLateral) + (msg.k === ITEM.BANANA ? 0.05 : msg.k === ITEM.OIL ? 0.07 : 0.5);
         p.target = Number.isInteger(msg.tg) ? msg.tg : -1;
         p.vx = msg.vx; p.vz = msg.vz;
         p.age = 0;
@@ -316,6 +403,39 @@ export class ItemSystem {
         }
         break;
       }
+      case 'pad': {
+        // Dropped boost pad: reuse the oldest slot if all are taken.
+        let slot = this.dropPads.find((p) => !p.active);
+        if (!slot) slot = this.dropPads.reduce((a, b) => (a.age > b.age ? a : b));
+        const idx = this.track.nearestIndex(msg.x, msg.z, -1);
+        Object.assign(slot, { active: true, id: msg.id, x: msg.x, z: msg.z, yaw: msg.yaw, age: 0, y: this.track.roadY(idx, this.track.lastLateral) + 0.06 });
+        break;
+      }
+      case 'slip': {
+        const k = this.getKart(msg.s);
+        if (k) this.particles.burst(k.x, k.y, k.z, 10, 4, 0.5, 0.3, 0x2a2438, -8);
+        if (k && k.simulated && k.slip() && this.onLocalEffect) this.onLocalEffect(k, 'slip');
+        break;
+      }
+      case 'cloud': {
+        const k = this.getKart(msg.s);
+        if (k && k.simulated && k.confuse() && this.onLocalEffect) this.onLocalEffect(k, 'confused');
+        break;
+      }
+      case 'steal': {
+        const from = this.getKart(msg.from), to = this.getKart(msg.to);
+        if (from && from.simulated && msg.it) {
+          from.item = ITEM.NONE;
+          from.itemUses = 0;
+          if (this.onLocalEffect) this.onLocalEffect(from, 'robbed');
+        }
+        if (to && to.simulated && msg.it && to.item === ITEM.NONE) {
+          to.setItem(msg.it);
+          if (this.onLocalEffect) this.onLocalEffect(to, 'stole');
+        }
+        if (from) this.particles.burst(from.x, from.y + 1.5, from.z, 10, 4, 0.5, 0.3, 0xc9b8ff, -2);
+        break;
+      }
       case 'zap': {
         // Lightning: every other kart shrinks. Each peer applies it to the karts it simulates.
         const karts = this.getKarts();
@@ -336,7 +456,7 @@ export class ItemSystem {
   // ---------------------------------------------------------------- simulation
 
   _find(id) {
-    return this.shells.findById(id) || this.reds.findById(id) || this.bananas.findById(id);
+    return this.shells.findById(id) || this.reds.findById(id) || this.bananas.findById(id) || this.oils.findById(id);
   }
 
   /** Weighted item roll: leaders get defensive items, karts at the back get catch-up items. */
@@ -351,6 +471,12 @@ export class ItemSystem {
       [ITEM.RED_SHELL, kart.rank > 1 ? 0.08 + 0.25 * t : 0], // nobody to chase from 1st
       [ITEM.MEGA, 0.02 + 0.11 * t],
       [ITEM.LIGHTNING, t > 0.5 ? 0.14 * (t - 0.5) * 2 : 0], // back half only
+      [ITEM.TRIPLE, 0.04 + 0.18 * t],
+      [ITEM.OIL, 0.18 - 0.1 * t],
+      [ITEM.GHOST, t > 0.15 && t < 0.9 ? 0.07 : 0],
+      [ITEM.ROCKET, t > 0.65 ? 0.22 * (t - 0.65) / 0.35 : 0], // last places only
+      [ITEM.PAD, 0.08],
+      [ITEM.CLOUD, kart.rank > 1 && t > 0.25 ? 0.07 : 0], // never from 1st
     ];
     let sum = 0;
     for (const [, w] of table) sum += Math.max(0, w);
@@ -384,6 +510,28 @@ export class ItemSystem {
     this._updateReds(dt);
     const bananas = this.bananas.items;
     for (let i = 0; i < bananas.length; i++) if (bananas[i].active) bananas[i].age += dt;
+    const oils = this.oils.items;
+    for (let i = 0; i < oils.length; i++) {
+      const o = oils[i];
+      if (!o.active) continue;
+      o.age += dt;
+      if (o.age > ITEMS.oilLife) o.active = false;
+    }
+    // Dropped boost pads: every peer applies them to the karts it simulates.
+    for (const p of this.dropPads) {
+      if (!p.active) continue;
+      p.age += dt;
+      if (p.age > ITEMS.padLife) { p.active = false; continue; }
+      for (let i = 0; i < karts.length; i++) {
+        const k = karts[i];
+        if (!k.simulated) continue;
+        const dx = k.x - p.x, dz = k.z - p.z;
+        if (dx * dx + dz * dz < 2.6 * 2.6 && Math.abs(k.y - k.radius - p.y) < 2 && k.hitPad()) {
+          this.particles.burst(p.x, p.y + 0.3, p.z, 8, 5, 0.3, 0.25, 0xffb703, -6);
+        }
+      }
+    }
+    for (const [slot, t] of this._slipCooldown) this._slipCooldown.set(slot, t - dt);
 
     if (this.isAuthority) this._authorityChecks(karts);
   }
@@ -511,12 +659,13 @@ export class ItemSystem {
       }
 
       if (k.spinTimer > 0 || k.finished) continue;
-      if (k.megaTimer > 0) {
+      if (k.ghostTimer > 0) continue; // ghosts can't be touched by anything
+      if (k.megaTimer > 0 || k.rocketTimer > 0) {
         // Mega karts smash projectiles and flatten anyone they touch.
         this._megaSmash(k, this.shells.items, ITEMS.shellRadius);
         this._megaSmash(k, this.reds.items, ITEMS.shellRadius);
         this._megaSmash(k, this.bananas.items, ITEMS.bananaRadius);
-        this._megaSquash(k, karts);
+        this._megaSquash(k, karts); // the rocket bowls karts over too
         continue;
       }
       if (k.shrinkTimer > 0 && this._isSquashed(k, karts)) {
@@ -526,6 +675,20 @@ export class ItemSystem {
       this._checkProjectileHits(k, this.shells.items, ITEMS.shellRadius, ITEMS.shellOwnerGrace);
       this._checkProjectileHits(k, this.reds.items, ITEMS.shellRadius, ITEMS.shellOwnerGrace);
       this._checkProjectileHits(k, this.bananas.items, ITEMS.bananaRadius, 0.6);
+      // Oil slicks aren't consumed: they catch every kart that drives through.
+      if ((this._slipCooldown.get(k.slot) || 0) <= 0) {
+        const r2 = (ITEMS.oilRadius + KART.radius * 0.6) ** 2;
+        for (let i = 0; i < this.oils.items.length; i++) {
+          const o = this.oils.items[i];
+          if (!o.active || (o.owner === k.slot && o.age < 0.8)) continue;
+          const dx = k.netX - o.x, dz = k.netZ - o.z;
+          if (dx * dx + dz * dz < r2 && Math.abs(ky - o.y) < 2.5) {
+            this._slipCooldown.set(k.slot, 2);
+            this._emit({ t: 'slip', s: k.slot });
+            break;
+          }
+        }
+      }
     }
 
     // Shells destroy bananas they touch.
@@ -551,7 +714,7 @@ export class ItemSystem {
   _isSquashed(k, karts) {
     for (let j = 0; j < karts.length; j++) {
       const o = karts[j];
-      if (o === k || o.shrinkTimer > 0 || Math.abs(o.y - k.y) > 4) continue;
+      if (o === k || o.shrinkTimer > 0 || o.ghostTimer > 0 || Math.abs(o.y - k.y) > 4) continue;
       const reach = KART.radius * (k.megaScale + o.megaScale) + 0.3;
       const dx = k.netX - o.netX, dz = k.netZ - o.netZ;
       if (dx * dx + dz * dz < reach * reach) return true;
@@ -572,7 +735,7 @@ export class ItemSystem {
   _megaSquash(k, karts) {
     for (let j = 0; j < karts.length; j++) {
       const o = karts[j];
-      if (o === k || o.megaTimer > 0 || o.spinTimer > 0 || o.finished || Math.abs(o.y - k.y) > 4) continue;
+      if (o === k || o.megaTimer > 0 || o.ghostTimer > 0 || o.rocketTimer > 0 || o.spinTimer > 0 || o.finished || Math.abs(o.y - k.y) > 4) continue;
       const reach = KART.radius * (k.megaScale + o.megaScale) + 0.4;
       const dx = k.netX - o.netX, dz = k.netZ - o.netZ;
       if (dx * dx + dz * dz < reach * reach) this._emit({ t: 'hit', s: o.slot, id: 0 });
@@ -677,5 +840,49 @@ export class ItemSystem {
     }
     this.bananaMesh.count = n;
     this.bananaMesh.instanceMatrix.needsUpdate = true;
+
+    n = 0;
+    const oils = this.oils.items;
+    for (let i = 0; i < oils.length; i++) {
+      const o = oils[i];
+      if (!o.active) continue;
+      const fade = Math.min(1, (ITEMS.oilLife - o.age) / 1.5); // shrink away at the end
+      e.set(0, o.id * 2.3, 0);
+      q.setFromEuler(e);
+      m.compose(p.set(o.x, o.y, o.z), q, s.set(fade, 1, fade));
+      this.oilMesh.setMatrixAt(n++, m);
+    }
+    this.oilMesh.count = n;
+    this.oilMesh.instanceMatrix.needsUpdate = true;
+
+    n = 0;
+    for (const pad of this.dropPads) {
+      if (!pad.active) continue;
+      e.set(0, pad.yaw, 0);
+      q.setFromEuler(e);
+      const pulse = 1 + Math.sin(time * 8) * 0.03;
+      m.compose(p.set(pad.x, pad.y, pad.z), q, s.set(pulse, 1, pulse));
+      this.padMesh.setMatrixAt(n++, m);
+    }
+    this.padMesh.count = n;
+    this.padMesh.instanceMatrix.needsUpdate = true;
+
+    // Storm clouds over confused karts, with a little rain.
+    n = 0;
+    for (let i = 0; i < karts.length && n < CLOUD_CAP; i++) {
+      const kt = karts[i];
+      if (!(kt.confusedTimer > 0)) continue;
+      const cy = (kt.renderY ?? kt.y) + 4.2 * (kt.megaScale || 1);
+      e.set(0, time * 0.8, 0);
+      q.setFromEuler(e);
+      m.compose(p.set(kt.renderX ?? kt.x, cy, kt.renderZ ?? kt.z), q, s.set(1, 0.8, 1));
+      this.cloudMesh.setMatrixAt(n++, m);
+      if (Math.random() < 0.6) {
+        this.particles.spawn((kt.renderX ?? kt.x) + (Math.random() - 0.5) * 2.2, cy - 0.6, (kt.renderZ ?? kt.z) + (Math.random() - 0.5) * 2.2, 0, -9, 0, 0.35, 0.12, 0x9ecbff, 0);
+      }
+      if (Math.random() < 0.02) this.particles.burst(kt.renderX ?? kt.x, cy - 0.8, kt.renderZ ?? kt.z, 6, 3, 0.2, 0.25, 0xfff176, -2);
+    }
+    this.cloudMesh.count = n;
+    this.cloudMesh.instanceMatrix.needsUpdate = true;
   }
 }
