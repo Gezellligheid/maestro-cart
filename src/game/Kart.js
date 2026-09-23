@@ -59,6 +59,14 @@ export class Kart {
     this.confusedTimer = 0; // storm cloud: steering reversed
     this.ghostTimer = 0; // intangible, can't be hit
     this.rocketTimer = 0; // autopilot rocket
+    this.stallTimer = 0; // botched start: engine stalls
+    this.canTrick = false; // launched off a ramp/crest: a hop press in the air does a trick
+    this.trickTimer = 0;
+    this.trickDone = false;
+    this._wasGrounded = true;
+    this.slipCharge = 0; // slipstream build-up behind another kart
+    this.drafting = false;
+    this.inWater = false;
     this.megaRemote = false;
     this.steerInput = 0; // smoothed steering
     this.bumpX = 0; this.bumpZ = 0; // knock-back velocity from kart collisions
@@ -163,6 +171,20 @@ export class Kart {
     const rest = this.radius / Math.max(0.5, this._n.y); // centre height above a touching surface
     this.grounded = gd >= 0 && this._n.y > 0.5 && this.airTimer <= 0 && gd <= rest + 0.35;
     this.touching = this.grounded && gd <= rest + 0.08;
+    // Tricks: leaving the ground with upward speed (ramp or crest, not a hop) arms a trick;
+    // landing after doing one gives a boost.
+    if (!this.grounded && this._wasGrounded && this.airTimer <= 0 && v.y > 1.2) this.canTrick = true;
+    const justLanded = this.grounded && !this._wasGrounded;
+    this._wasGrounded = this.grounded;
+    if (this.trickTimer > 0) this.trickTimer -= dt;
+    if (justLanded) {
+      if (this.trickDone) {
+        this.boostTimer = Math.max(this.boostTimer, 0.75);
+        this.pendingImpulse += 5;
+      }
+      this.trickDone = false;
+      this.canTrick = false;
+    }
 
     let sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
     // Separate out the knock-back component so the arcade model works on the kart's own motion.
@@ -175,6 +197,7 @@ export class Kart {
     // Sand traps behave like off-road.
     this.offroad = Math.abs(this.trackLateral) > this.track.roadLimitAt(this.trackIdx) || hazard === 'sand';
     this.onIce = hazard === 'ice';
+    this.inWater = hazard === 'water';
     if (this.padCooldown > 0) this.padCooldown -= dt;
     if (this.padCooldown <= 0 && this.grounded && this.track.padAt(this.trackIdx, this.trackLateral)) {
       // Boost pad: short mushroom-style kick.
@@ -197,6 +220,7 @@ export class Kart {
     }
     if (this.megaTimer > 0) maxSpeed *= 1.12;
     else if (this.shrinkTimer > 0) maxSpeed *= ITEMS.shrinkSpeed;
+    if (this.inWater && !boosting) maxSpeed *= 0.78; // wading through a water crossing
     if (this.rocketTimer > 0) maxSpeed = C.maxSpeed * this.speedScale * ITEMS.rocketSpeed;
 
     let throttle = this.controlsEnabled ? input.throttle : 0;
@@ -205,6 +229,15 @@ export class Kart {
     const driftPressed = this.controlsEnabled && input.driftPressed;
     if (this.finished && this.control === 'local') throttle = Math.min(throttle, 0.4);
     if (this.confusedTimer > 0) steer = -steer; // storm cloud scrambles your steering
+    if (this.stallTimer > 0) {
+      this.stallTimer -= dt;
+      throttle = 0; // engine stalled after a botched start
+    }
+    if (!this.grounded && this.canTrick && driftPressed) {
+      this.trickTimer = 0.5;
+      this.trickDone = true;
+      this.canTrick = false;
+    }
     if (this.rocketTimer > 0) {
       // Rocket autopilot: follow the racing line flat out.
       const p = this._pos;
@@ -462,13 +495,14 @@ export class Kart {
 
   /** Bits sharing the item byte: 1 = rocket, 2 = slipping, 4 = confused (shifted by 4). */
   get itemBits() {
-    return ((this.rocketTimer > 0 ? 1 : 0) | (this.slipTimer > 0 ? 2 : 0) | (this.confusedTimer > 0 ? 4 : 0)) << 4;
+    return ((this.rocketTimer > 0 ? 1 : 0) | (this.slipTimer > 0 ? 2 : 0) | (this.confusedTimer > 0 ? 4 : 0) | (this.trickTimer > 0 ? 8 : 0)) << 4;
   }
 
   applyRemoteItemBits(bits) {
     this.rocketTimer = bits & 1 ? 1 : 0;
     this.slipTimer = bits & 2 ? 1 : 0;
     this.confusedTimer = bits & 4 ? 1 : 0;
+    if (bits & 8 && this.trickTimer <= 0) this.trickTimer = 0.5;
   }
 
   zap() {
@@ -581,6 +615,7 @@ export class Kart {
 
   /** Advance remote-only visual state each frame. */
   updateRemoteVisuals(dt) {
+    if (this.trickTimer > 0) this.trickTimer -= dt;
     this._updateScale(dt);
     const driftTarget = this.drifting ? -this.driftDir * 0.26 : 0;
     this.driftVisual += (driftTarget - this.driftVisual) * Math.min(1, dt * 8);

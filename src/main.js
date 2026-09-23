@@ -234,6 +234,7 @@ class Game {
     this.finishFlag.cancel();
     clearTimeout(this._menuMusicTimer);
     this.audio.stopCountdown();
+    this.audio.stopEngine();
     this.audio.playMenu(1.5);
     this.closeGarage();
     this.net.destroy();
@@ -376,6 +377,8 @@ class Game {
     this.audio.init();
     clearTimeout(this._menuMusicTimer);
     this.audio.stopMusic(0.6);
+    this.audio.stopEngine();
+    this.audio.startEngine();
     this.audio.stopCountdown();
     this._sfxState.countdown = false;
     this.firstFinishAt = 0;
@@ -411,6 +414,7 @@ class Game {
   _fixedPre(dt) {
     const input = this.input.state;
     this._kartBumps();
+    this._slipstream(dt);
     for (let i = 0; i < this.karts.length; i++) {
       const k = this.karts[i];
       if (!k.simulated) continue;
@@ -428,6 +432,42 @@ class Game {
    * the sideways push within a few frames, so each locally simulated kart also gets a decaying
    * knock-back impulse. Each peer handles its own kart, so both sides of a bump feel it.
    */
+  /**
+   * Slipstream: stay tucked in behind another kart (within ~14 m, nearly straight ahead) at
+   * speed and you build up a draft; after about a second you get a speed boost.
+   */
+  _slipstream(dt) {
+    const karts = this.karts;
+    for (let i = 0; i < karts.length; i++) {
+      const k = karts[i];
+      if (!k.simulated) continue;
+      let drafting = false;
+      if (k.speed > 18 && k.grounded) {
+        const sin = Math.sin(k.yaw), cos = Math.cos(k.yaw);
+        for (let j = 0; j < karts.length; j++) {
+          const o = karts[j];
+          if (o === k || o.speed < 14 || o.ghostTimer > 0) continue;
+          const dx = o.x - k.x, dz = o.z - k.z;
+          const d = Math.hypot(dx, dz);
+          if (d < 2.5 || d > 14 || Math.abs(o.y - k.y) > 3) continue;
+          if ((dx * sin + dz * cos) / d > 0.97) { drafting = true; break; }
+        }
+      }
+      k.drafting = drafting;
+      if (drafting) {
+        k.slipCharge += dt;
+        if (k.slipCharge > 1.1) {
+          k.slipCharge = 0;
+          k.boostTimer = Math.max(k.boostTimer, 0.8);
+          k.pendingImpulse += 3;
+          if (k === this.localKart) this.hud.subtitle('Slipstream!', 1);
+        }
+      } else {
+        k.slipCharge = Math.max(0, k.slipCharge - dt * 2);
+      }
+    }
+  }
+
   _kartBumps() {
     const karts = this.karts;
     for (let i = 0; i < karts.length; i++) {
@@ -540,6 +580,7 @@ class Game {
     this.results.show(false);
     this.hud.show(false);
     this.resultsTimer = 0;
+    this.audio.stopEngine();
     this.finishFlag.play(() => this._beginPodium());
   }
 
@@ -791,6 +832,7 @@ class Game {
       });
       this.hud.drawMinimap(this.karts, lk);
       this._localSfx(lk);
+      this.audio.updateEngine(lk.speed, lk.control === 'bot' ? 1 : this.input.state.throttle, lk.drifting, lk.boostTimer > 0, lk.grounded);
       if (this.results.visible && this.race.state !== 'done') this._refreshResultsThrottled(dt);
     } else {
       const b = this.track.bounds;
@@ -861,6 +903,9 @@ class Game {
   /** Edge-triggered sound effects for the local kart. */
   _localSfx(k) {
     const s = this._sfxState;
+    const trick = k.trickTimer > 0;
+    if (trick && !s.trick) { this.audio.blip('trick'); this.hud.subtitle('Trick!', 0.8); }
+    s.trick = trick;
     const rolling = k.rollTimer > 0;
     if (rolling && !s.rolling) this.audio.playRoll(k.rollTimer);
     s.rolling = rolling;
@@ -899,6 +944,12 @@ class Game {
         this._sfxState.countdown = true;
         this.audio.playCountdown(remaining * 1000);
       }
+      // Start boost: remember when you pressed accelerate (seconds before GO).
+      if (this.input.state.throttle > 0) {
+        if (this._startPressAt == null) this._startPressAt = remaining;
+      } else {
+        this._startPressAt = null;
+      }
       const n = Math.ceil(remaining);
       if (n !== this.lastCountdown && n <= 3 && n > 0) {
         this.lastCountdown = n;
@@ -908,6 +959,34 @@ class Game {
       this.lastCountdown = 0;
       this.hud.flash('GO!', 0.9, '#4ade80');
       this.audio.startMusic(this.track.seed % 3); // a different tune per circuit
+      this._applyStartBoosts();
+    }
+  }
+
+  /**
+   * Rocket start: press accelerate during "1" (about 1.1–0.25 s before GO) for a boost.
+   * Holding it since "2" or earlier floods the engine and it stalls for a moment.
+   */
+  _applyStartBoosts() {
+    const k = this.localKart;
+    const at = this._startPressAt;
+    this._startPressAt = null;
+    if (k && at != null) {
+      if (at <= 1.1 && at >= 0.2) {
+        k.boostTimer = Math.max(k.boostTimer, 1.2);
+        k.pendingImpulse += 10;
+        this.hud.subtitle('Rocket start!', 1.5);
+      } else if (at > 1.1) {
+        k.stallTimer = 0.9;
+        this.audio.blip('stall');
+        this.hud.subtitle('Engine flooded! Too early', 1.5);
+        this.particles.burst(k.x, k.y + 0.6, k.z, 12, 3, 0.8, 0.5, 0x666666, 2);
+      }
+    }
+    // CPUs get a random start too.
+    for (const b of this.bots) {
+      const r = Math.random();
+      if (r < 0.35) { b.boostTimer = 1.2; b.pendingImpulse += 10; } else if (r > 0.92) b.stallTimer = 0.9;
     }
   }
 

@@ -201,6 +201,9 @@ export class Audio {
       zap: { type: 'sawtooth', f0: 1800, f1: 70, dur: 0.6, vol: 0.2 },
       shield: { type: 'sine', f0: 400, f1: 900, dur: 0.35, vol: 0.2 },
       magnet: { type: 'square', f0: 220, f1: 330, dur: 0.3, vol: 0.1 },
+      trick: { type: 'triangle', f0: 600, f1: 1400, dur: 0.25, vol: 0.18 },
+      stall: { type: 'sawtooth', f0: 90, f1: 40, dur: 0.6, vol: 0.2 },
+      horn: { type: 'square', f0: 440, f1: 420, dur: 0.35, vol: 0.14 },
     };
     const p = presets[kind] || presets.item;
     osc.type = p.type;
@@ -210,6 +213,60 @@ export class Audio {
     g.gain.exponentialRampToValueAtTime(0.001, t + p.dur);
     osc.start(t);
     osc.stop(t + p.dur + 0.02);
+  }
+
+  // ---------------------------------------------------------------- engine
+
+  _noiseBuffer() {
+    if (this._noise) return this._noise;
+    const len = this.ctx.sampleRate * 1;
+    const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    this._noise = buf;
+    return buf;
+  }
+
+  /** Synthesised engine hum (two detuned oscillators through a low-pass) + tyre screech noise. */
+  startEngine() {
+    if (!this.ctx || this.engine) return;
+    const c = this.ctx;
+    const o1 = c.createOscillator(); o1.type = 'sawtooth';
+    const o2 = c.createOscillator(); o2.type = 'square';
+    const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 600;
+    const g = c.createGain(); g.gain.value = 0;
+    o1.connect(lp); o2.connect(lp); lp.connect(g).connect(this.sfxGain);
+    const ns = c.createBufferSource(); ns.buffer = this._noiseBuffer(); ns.loop = true;
+    const bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 2600; bp.Q.value = 1.4;
+    const ng = c.createGain(); ng.gain.value = 0;
+    ns.connect(bp).connect(ng).connect(this.sfxGain);
+    o1.start(); o2.start(); ns.start();
+    this.engine = { o1, o2, lp, g, ns, ng };
+  }
+
+  /** Pitch and loudness follow speed and throttle; screech while drifting on the ground. */
+  updateEngine(speed, throttle, drifting, boosting, grounded) {
+    const e = this.engine;
+    if (!e) return;
+    const t = this.ctx.currentTime;
+    const s = Math.min(1, Math.abs(speed) / 45);
+    const f = 55 + s * 150 + (boosting ? 30 : 0);
+    e.o1.frequency.setTargetAtTime(f, t, 0.06);
+    e.o2.frequency.setTargetAtTime(f * 0.502, t, 0.06);
+    e.lp.frequency.setTargetAtTime(450 + s * 1700 + (throttle > 0 ? 350 : 0), t, 0.1);
+    e.g.gain.setTargetAtTime(0.03 + s * 0.045 + (throttle > 0 ? 0.02 : 0), t, 0.12);
+    e.ng.gain.setTargetAtTime(drifting && grounded ? 0.05 : 0, t, 0.05);
+  }
+
+  stopEngine() {
+    const e = this.engine;
+    if (!e) return;
+    const t = this.ctx.currentTime;
+    e.g.gain.setTargetAtTime(0, t, 0.15);
+    e.ng.gain.setTargetAtTime(0, t, 0.05);
+    const stopAt = t + 0.6;
+    e.o1.stop(stopAt); e.o2.stop(stopAt); e.ns.stop(stopAt);
+    this.engine = null;
   }
 
   get muted() {

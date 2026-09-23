@@ -144,7 +144,9 @@ export class KartRenderer {
       const visualYaw = yaw + k.driftVisual + k.spinAngle;
       const lean = -k.steerVisual * Math.min(1, Math.abs(k.speed) / 25) * 0.08 + k.driftVisual * 0.15;
       const bob = k.boostTimer > 0 ? Math.sin(performance.now() * 0.05) * 0.03 : 0;
-      this._e.set(k.visPitch, visualYaw, lean + k.visRoll);
+      // Trick: a quick barrel roll in the air.
+      const trick = k.trickTimer > 0 ? (1 - k.trickTimer / 0.5) * Math.PI * 2 : 0;
+      this._e.set(k.visPitch, visualYaw, lean + k.visRoll + trick);
       this._q.setFromEuler(this._e);
       this._s.set(scale, scale, scale);
       this._kartMat.compose(this._p.set(x, y + bob, z), this._q, this._s);
@@ -246,6 +248,17 @@ export class KartRenderer {
       for (let n = 0; n < 3; n++) {
         p.spawn(x - sin * 1.8 * scale + (Math.random() - 0.5) * 0.6, y + 0.6 * scale + (Math.random() - 0.5) * 0.5, z - cos * 1.8 * scale + (Math.random() - 0.5) * 0.6,
           -sin * 14, (Math.random() - 0.3) * 2, -cos * 14, 0.3, 0.7, n === 0 ? 0xffffff : Math.random() < 0.5 ? 0xff5a1f : 0xffb703, 0);
+      }
+    }
+    if (k.drafting && Math.random() < 0.7) {
+      // Slipstream: wind lines streaming past.
+      const side = Math.random() < 0.5 ? -1 : 1;
+      p.spawn(x + sin * 3 + rx * side * (1 + Math.random()), y + 0.4 + Math.random() * 1.2, z + cos * 3 + rz * side * (1 + Math.random()),
+        -sin * 30, 0, -cos * 30, 0.18, 0.14, 0xe8f6ff, 0);
+    }
+    if (k.inWater && Math.abs(k.speed) > 5) {
+      for (let side = -1; side <= 1; side += 2) {
+        p.spawn(x + rx * side * 0.9, y + 0.2, z + rz * side * 0.9, rx * side * 3 + (Math.random() - 0.5) * 2, 3 + Math.random() * 3, rz * side * 3 + (Math.random() - 0.5) * 2, 0.5, 0.3, 0x9fd8ff, -14);
       }
     }
     if (k.slipTimer > 0 && k.grounded) {
