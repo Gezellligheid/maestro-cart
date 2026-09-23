@@ -110,6 +110,7 @@ export class Kart {
     this.rollTimer = 0; // item roulette
     this.pendingItem = ITEM.NONE;
     this.coins = 0;
+    this.balloons = null; // Balloon Battle only
 
     // Race progress
     this.trackIdx = track.nearestIndex(spawn.x, spawn.z, spawn.idx ?? -1);

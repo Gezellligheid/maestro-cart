@@ -43,6 +43,9 @@ public broker handles signalling only; gameplay traffic is direct WebRTC.
 - **Grand Prix**: four races in a row with points per place (15, 12, 10, 8, 6, 4, 2, 1), a running
   standings table on the results screen, and a trophy podium for the overall top three. Solo via
   the menu; in a room the host ticks "Grand Prix" in the lobby.
+- **Balloon Battle**: everyone starts with three balloons; any spin-out or lightning hit pops one.
+  Lose them all and you are out (see-through, and you can spectate). The last kart with balloons
+  wins, or the most balloons after 3 minutes. Solo from the menu, or tick it in the room lobby.
 - **Phones & tablets**: on-screen controls. The kart accelerates by itself; slide on the left pad
   to steer, with Drift, Item, Brake and Respawn buttons on the right.
 - **Garage** (in the room lobby and between rounds): coins you're holding when a round ends (plus a

@@ -28,11 +28,12 @@ import { Weather } from './engine/Weather.js';
 import { Records, seedToCode, codeToSeed } from './game/Records.js';
 import { GhostRecorder, GhostKart, saveGhost, loadGhost } from './game/Ghost.js';
 import { Cup, CUP_RACES } from './game/Cup.js';
+import { Balloons } from './game/Balloons.js';
 import { Emotes } from './ui/Emotes.js';
 import { TouchControls } from './ui/Touch.js';
 import { StatsPanel } from './ui/StatsPanel.js';
 import {
-  MAX_KARTS, TOTAL_LAPS, SOLO_BOTS, NET_TICK_HZ, KART, CPU_NAMES, ITEM,
+  MAX_KARTS, TOTAL_LAPS, SOLO_BOTS, NET_TICK_HZ, KART, CPU_NAMES, ITEM, BATTLE_MS, BALLOONS,
 } from './game/constants.js';
 
 const COUNTDOWN_MS = 3600;
@@ -68,6 +69,12 @@ class Game {
     this.ghost = null;
     document.getElementById('btn-trial').addEventListener('click', () => this.startTrial(this.lobby.name));
     document.getElementById('btn-cup').addEventListener('click', () => this.startCup(this.lobby.name));
+    document.getElementById('btn-battle').addEventListener('click', () => this.startBattle(this.lobby.name));
+    // Grand Prix and Balloon Battle are either/or in a room.
+    document.getElementById('cup-toggle').addEventListener('change', (e) => { if (e.target.checked) document.getElementById('battle-toggle').checked = false; });
+    document.getElementById('battle-toggle').addEventListener('change', (e) => { if (e.target.checked) document.getElementById('cup-toggle').checked = false; });
+    this.battle = false;
+    this.balloons = new Balloons(this.renderer, this.particles);
     this.cup = null; // Grand Prix in progress (solo / host)
     this.cupView = null; // { race, table } shown to everyone
     document.getElementById('btn-copy-code').addEventListener('click', () => {
@@ -288,6 +295,7 @@ class Game {
   }
 
   toMenu() {
+    this.battle = false;
     this.cup = null;
     this.cupView = null;
     this.podium.stop();
@@ -340,12 +348,21 @@ class Game {
   }
 
   startSolo(name) {
+    this.battle = false;
     this.cup = null;
     this._startSoloRace(name);
   }
 
   startCup(name) {
+    this.battle = false;
     this.cup = new Cup();
+    this._startSoloRace(name);
+  }
+
+  /** Balloon Battle: three balloons each; hits pop one; the last kart with balloons wins. */
+  startBattle(name) {
+    this.battle = true;
+    this.cup = null;
     this._startSoloRace(name);
   }
 
@@ -360,6 +377,7 @@ class Game {
   /** Time trial: just you, three mushrooms, no item boxes, and your best run as a ghost. */
   startTrial(name, seed = null) {
     this.mode = 'trial';
+    this.battle = false;
     this.cup = null;
     this.cupView = null;
     const s = seed ?? this._codeSeed() ?? this._nextSeed();
@@ -377,7 +395,8 @@ class Game {
   /** Grand Prix bookkeeping before each race (a finished cup starts over). */
   _advanceCup() {
     if (this.mode === 'host') {
-      const wanted = document.getElementById('cup-toggle').checked;
+      this.battle = document.getElementById('battle-toggle').checked;
+      const wanted = !this.battle && document.getElementById('cup-toggle').checked;
       if (!wanted) this.cup = null;
       else if (!this.cup || this.cup.over) this.cup = new Cup();
     } else if (this.cup && this.cup.over) {
@@ -445,7 +464,7 @@ class Game {
     this.net.resetReady();
     this._advanceCup();
     const seed = this._nextSeed();
-    this.net.broadcast({ t: 'start', players, countdown: COUNTDOWN_MS, seed, cup: this.cup ? this.cup.race : 0 });
+    this.net.broadcast({ t: 'start', players, countdown: COUNTDOWN_MS, seed, cup: this.cup ? this.cup.race : 0, battle: this.battle ? 1 : 0 });
     this._setupRace(players.map((p) => ({ ...p, control: p.cpu ? 'bot' : p.slot === 0 ? 'local' : 'remote' })), COUNTDOWN_MS, seed);
   }
 
@@ -459,6 +478,7 @@ class Game {
       cpu: !!p.cpu,
     })).filter((p) => p.slot >= 0 && p.slot < MAX_KARTS);
     const cupRace = msg.cup | 0;
+    this.battle = !!msg.battle;
     this.cupView = cupRace ? { race: cupRace, table: cupRace > 1 && this.cupView ? this.cupView.table : [] } : null;
     this._setupRace(roster, msg.countdown, msg.seed >>> 0);
   }
@@ -523,6 +543,12 @@ class Game {
     });
     for (const it of this.interp) it.reset();
     for (const r of this.latest) r.valid = false;
+    this.race.battle = this.battle;
+    for (const k of this.karts) k.balloons = this.battle ? BALLOONS : null;
+    if (this.battle) this.items.disableCoins();
+    this.balloons.set(this.battle);
+    this.hud.setBattle(this.battle);
+    this._battleWarned = false;
 
     this.items.isAuthority = this.mode !== 'client';
     this.kartRenderer.setColors(this.karts);
@@ -545,7 +571,7 @@ class Game {
     this.hud.resetCache();
     this.hud.clearCenter();
     this.hud.show(true);
-    const head = this.cupView ? `Grand Prix · Race ${this.cupView.race}/${CUP_RACES}` : `Round ${this.round}`;
+    const head = this.battle ? 'Balloon Battle · pop their balloons!' : this.cupView ? `Grand Prix · Race ${this.cupView.race}/${CUP_RACES}` : `Round ${this.round}`;
     this.hud.subtitle(`${head} · ${this.track.name}${this.track.moodLabel ? ' · ' + this.track.moodLabel : ''}`, 3.2);
     document.getElementById('results-track').textContent = `Round ${this.round} · ${this.track.name} · Track code ${seedToCode(seed)}`;
     const rec = this.records.track(seed);
@@ -721,6 +747,11 @@ class Game {
 
   _checkRaceOver() {
     if (this.mode === 'client' || this.race.state !== 'racing') return;
+    if (this.battle) {
+      const alive = this.karts.filter((k) => !k.finished).length;
+      if ((this.karts.length > 1 && alive <= 1) || this.race.elapsed(this.now) >= BATTLE_MS) this._endBattle();
+      return;
+    }
     let all = this.karts.length > 0;
     for (const k of this.karts) if (!k.finished) { all = false; break; }
     const timedOut = this.firstFinishAt && this.now - this.firstFinishAt > RACE_TIMEOUT_AFTER_FIRST_MS;
@@ -819,6 +850,7 @@ class Game {
     let note = '';
     let againLabel = null;
     this._renderCup();
+    if (this.battle && this.mode === 'solo') againLabel = 'Next Battle';
     if (this.cup && this.mode === 'solo') againLabel = this.cup.over ? 'New Grand Prix' : `Next Race · ${this.cup.race + 1}/${CUP_RACES}`;
     if (this.mode === 'trial') {
       const rec = this.records.track(this.track.seed);
@@ -871,6 +903,62 @@ class Game {
     if (this.mode === 'client') return;
     this._showEmote(k.slot, idx);
     if (this.mode === 'host') this.net.broadcast({ t: 'emote', s: k.slot, e: idx });
+  }
+
+  /** Balloon Battle: each peer pops balloons for the karts it simulates. */
+  _updateBattle(dt) {
+    if (this.race.state !== 'racing') return;
+    for (const k of this.karts) {
+      if (!k.simulated || k.finished) continue;
+      k.balloonGrace = Math.max(0, (k.balloonGrace || 0) - dt);
+      // Any spin-out or lightning shrink costs a balloon (with a short grace period).
+      const hit = (k.spinTimer > 0 && !k._wasSpin) || (k.shrinkTimer > 0 && !k._wasShrink);
+      k._wasSpin = k.spinTimer > 0;
+      k._wasShrink = k.shrinkTimer > 0;
+      if (!hit || k.balloonGrace > 0) continue;
+      k.balloons = Math.max(0, k.balloons - 1);
+      k.balloonGrace = 1.5;
+      if (k === this.localKart && k.balloons > 0) this.hud.subtitle(`${k.balloons} balloon${k.balloons === 1 ? '' : 's'} left!`, 1.5);
+      if (k.balloons === 0) this._eliminate(k);
+    }
+    const left = BATTLE_MS - this.race.elapsed(this.now);
+    if (!this._battleWarned && left < 30000) {
+      this._battleWarned = true;
+      this.hud.flash('30 seconds!', 1.5, '#ffd23f');
+    }
+  }
+
+  _eliminate(k) {
+    k.finished = true;
+    k.finishTime = this.race.elapsed(this.now);
+    k.ghostTimer = 1e9; // out of the fight: see-through and untouchable
+    k.setItem(ITEM.NONE);
+    if (k === this.localKart) {
+      this.hud.flash('Popped!', 2, '#ff6b6b');
+      this.hud.subtitle('You are out: Tab to watch the others', 3);
+      if (!k.ai) k.ai = new AIDriver(k, this.track, 0.85);
+      k.control = 'bot';
+      this.resultsTimer = 2.2;
+    } else if (this.localKart && !this.localKart.finished) {
+      this.hud.subtitle(`${k.name} is out!`, 1.6);
+    }
+  }
+
+  /** Survivors (most balloons first), then the eliminated, last one out first. */
+  _endBattle() {
+    const t = this.race.elapsed(this.now);
+    const alive = this.karts.filter((k) => !k.finished).sort((a, b) => (b.balloons || 0) - (a.balloons || 0) || b.progress - a.progress);
+    const out = this.karts.filter((k) => k.finished).sort((a, b) => b.finishTime - a.finishTime);
+    this.race.finishOrder = [
+      ...alive.map((k) => ({ slot: k.slot, name: k.name, time: t })),
+      ...out.map((k) => ({ slot: k.slot, name: k.name, time: k.finishTime })),
+    ];
+    if (alive[0]) {
+      if (alive[0] === this.localKart) this.hud.flash('You Win!', 2.5, '#ffd23f');
+      else if (alive[0].control === 'bot') this._botEmote(alive[0], 3);
+    }
+    this._broadcastResults();
+    this._endRace();
   }
 
   _canSpectate() {
@@ -971,7 +1059,8 @@ class Game {
       k.rollTimer = rec.flags & FLAG.ROLLING ? 0.1 : 0;
       k.progress = rec.progress;
       k.lap = rec.lap;
-      k.coins = rec.coins;
+      if (this.battle) k.balloons = rec.coins;
+      else k.coins = rec.coins;
       const fin = (rec.flags & FLAG.FINISHED) !== 0;
       if (fin && !k.finished) {
         k.finished = true;
@@ -1078,6 +1167,7 @@ class Game {
       this._updateCountdown(remaining);
       this.physics.step(dt, this._pre, this._post);
       this._updateRemoteKarts(dt);
+      if (this.battle) this._updateBattle(dt);
       this.race.rank(this.karts);
       this._sendNetwork(dt);
       this._checkRaceOver();
@@ -1098,6 +1188,11 @@ class Game {
       this.kartRenderer.update(this.karts, this.physics.alpha, dt);
     }
     this.items.render(time, this.karts);
+    if (this.inRace && !this.podium.active) {
+      this.balloons.update(this.karts, time, (k) => { if (k === this.localKart) this.audio.blip('hit'); });
+    } else if (this.balloons.enabled) {
+      this.balloons.mesh.count = 0;
+    }
     // Moving hazards run on the race clock so every peer sees them in the same place.
     this.movers.update(this.inRace ? this.race.elapsed(this.now) / 1000 : time);
     if (this.inRace && !this.podium.active) {

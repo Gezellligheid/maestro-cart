@@ -204,6 +204,11 @@ export class ItemSystem {
     this.track.coinSpots.forEach((s, i) => Object.assign(this.coins[i], { x: s.x, y: s.y, z: s.z }));
   }
 
+  /** Balloon Battle: no coins on track. */
+  disableCoins() {
+    for (const c of this.coins) { c.active = false; c.timer = Infinity; }
+  }
+
   /** Time trial: no item boxes on track. */
   clearBoxes() {
     this._placeBoxes([]);

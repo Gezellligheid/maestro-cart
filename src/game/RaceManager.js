@@ -17,6 +17,7 @@ export class RaceManager {
     this.onLap = null; // (kart, lapTime) => void
     this.onFinish = null; // (kart) => void
     this.standings = [];
+    this.battle = false; // Balloon Battle: no laps, ranked by balloons
   }
 
   begin(now, countdownMs) {
@@ -47,7 +48,7 @@ export class RaceManager {
     const tr = this.track;
     k.trackIdx = tr.nearestIndex(k.x, k.z, k.trackIdx);
     k.trackLateral = tr.lastLateral;
-    if (k.finished || this.state !== 'racing') {
+    if (k.finished || this.state !== 'racing' || this.battle) {
       k.updateProgressValue();
       return;
     }
@@ -94,6 +95,12 @@ export class RaceManager {
     st.length = 0;
     for (let i = 0; i < karts.length; i++) st.push(karts[i]);
     st.sort((a, b) => {
+      if (this.battle) {
+        // Still in the fight first (most balloons), then the eliminated, last one out first.
+        if (a.finished !== b.finished) return a.finished ? 1 : -1;
+        if (a.finished) return b.finishTime - a.finishTime;
+        return (b.balloons || 0) - (a.balloons || 0) || b.progress - a.progress;
+      }
       if (a.finished !== b.finished) return a.finished ? -1 : 1;
       if (a.finished) return a.finishTime - b.finishTime;
       return b.progress - a.progress;

@@ -4,6 +4,8 @@ export const FIXED_DT = 1 / 60;
 export const MAX_SUBSTEPS = 5;
 
 export const MAX_KARTS = 8;
+export const BATTLE_MS = 180000; // Balloon Battle time limit
+export const BALLOONS = 3;
 export const TOTAL_LAPS = 3;
 export const SOLO_BOTS = 5;
 

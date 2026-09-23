@@ -37,6 +37,7 @@
             <button id="btn-solo" class="btn btn-primary flex-1"><i data-lucide="gamepad-2"></i>Solo Race</button>
             <button id="btn-cup" class="btn btn-primary flex-1"><i data-lucide="trophy"></i>Grand Prix</button>
           </div>
+          <button id="btn-battle" class="btn btn-secondary">🎈 Balloon Battle</button>
           <div class="flex gap-2">
             <button id="btn-trial" class="btn btn-secondary flex-1"><i data-lucide="timer"></i>Time Trial</button>
             <input id="track-code" maxlength="8" autocomplete="off" spellcheck="false" class="field w-36 font-mono uppercase tracking-widest" placeholder="TRACK CODE" title="Optional: a track code from the results screen replays that track (solo &amp; time trial)" />
@@ -76,6 +77,10 @@
             <span><span class="text-sm font-bold">Grand Prix</span> <span class="text-xs text-white/50">4 races, points, trophy</span></span>
             <input id="cup-toggle" type="checkbox" class="h-5 w-5 accent-amber-300" />
           </label>
+          <label id="battle-row" class="flex items-center justify-between rounded-xl bg-black/25 px-3 py-2">
+            <span><span class="text-sm font-bold">🎈 Balloon Battle</span> <span class="text-xs text-white/50">3 balloons, last kart wins</span></span>
+            <input id="battle-toggle" type="checkbox" class="h-5 w-5 accent-amber-300" />
+          </label>
           <button id="btn-ready" class="btn btn-primary"><i data-lucide="check"></i><span>Ready</span></button>
           <p id="ready-status" class="text-center text-sm text-white/60"></p>
           <button id="btn-start" class="btn btn-ghost text-sm"><i data-lucide="flag"></i>Start now (skip ready-up)</button>
@@ -111,7 +116,7 @@
       </div>
 
       <div class="absolute left-1/2 top-3 -translate-x-1/2 text-center sm:top-5">
-        <div class="chip"><i data-lucide="flag" class="h-4 w-4"></i><span>LAP <b id="hud-lap">1</b>/<span id="hud-laps">3</span></span></div>
+        <div class="chip"><i data-lucide="flag" class="h-4 w-4"></i><span><span id="hud-lap-label">LAP</span> <b id="hud-lap">1</b><span id="hud-laps-wrap">/<span id="hud-laps">3</span></span></span></div>
         <div id="hud-time" class="mt-1 font-mono text-2xl font-bold tabular-nums drop-shadow">0:00.00</div>
         <div id="hud-lastlap" class="font-mono text-xs text-white/60 tabular-nums"></div>
       </div>

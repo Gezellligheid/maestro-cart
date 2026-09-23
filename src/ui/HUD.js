@@ -1,4 +1,4 @@
-import { ITEM, TOTAL_LAPS, DRIFT_TIERS, KART } from '../game/constants.js';
+import { ITEM, TOTAL_LAPS, DRIFT_TIERS, KART, BATTLE_MS } from '../game/constants.js';
 import { formatTime, ordinal } from '../game/RaceManager.js';
 
 const ICONS = {
@@ -51,6 +51,14 @@ export class HUD {
 
   show(v) {
     this.root.classList.toggle('hidden', !v);
+  }
+
+  /** Balloon Battle: the lap counter shows your balloons and the clock counts down. */
+  setBattle(on) {
+    this.battle = on;
+    $('hud-lap-label').textContent = on ? '🎈' : 'LAP';
+    $('hud-laps-wrap').classList.toggle('hidden', on);
+    this._cache.lap = null;
   }
 
   _set(key, el, value, prop = 'textContent') {
@@ -139,9 +147,9 @@ export class HUD {
     this._set('pos', el.pos, String(kart.rank));
     this._set('posSuffix', el.posSuffix, ordinal(kart.rank).replace(/^\d+/, ''));
     this._set('posTotal', el.posTotal, `/ ${total}`);
-    const lap = kart.finished ? TOTAL_LAPS : kart.displayLap;
+    const lap = this.battle ? Math.max(0, kart.balloons || 0) : kart.finished ? TOTAL_LAPS : kart.displayLap;
     this._set('lap', el.lap, String(lap));
-    this._set('time', el.time, formatTime(kart.finished ? kart.finishTime : raceTime));
+    this._set('time', el.time, formatTime(this.battle ? Math.max(0, BATTLE_MS - raceTime) : kart.finished ? kart.finishTime : raceTime));
     this._set('lastLap', el.lastLap, kart.bestLapTime ? `BEST ${formatTime(kart.bestLapTime)}` : '');
     this._set('coins', el.coins, String(kart.coins));
 

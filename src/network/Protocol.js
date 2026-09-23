@@ -45,7 +45,8 @@ export class KartRecord {
     this.time = time;
     this.x = k.x; this.y = k.y; this.z = k.z; this.yaw = k.yaw;
     this.vx = k.vx; this.vy = k.vy; this.vz = k.vz;
-    this.progress = k.progress; this.lap = k.lap; this.coins = k.coins;
+    // In Balloon Battle the coins byte carries the balloon count instead.
+    this.progress = k.progress; this.lap = k.lap; this.coins = k.balloons ?? k.coins;
     this.steer = k.steerVisual; this.rank = k.rank;
     this.valid = true;
     return this;
