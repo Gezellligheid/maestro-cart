@@ -16,7 +16,14 @@ export class Renderer {
       powerPreference: 'high-performance',
       stencil: false,
     });
-    this.gl.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // Graphics quality: caps the render resolution. 'auto' starts sharp and steps down when
+    // frames are slow (most GPUs are fill-rate bound here, so resolution is the big lever).
+    this.quality = 'auto';
+    try { this.quality = localStorage.getItem('mkbros:gfx') || 'auto'; } catch { /* storage blocked */ }
+    this._autoScale = 1.5;
+    this._slow = 0;
+    this._fast = 0;
+    this.gl.setPixelRatio(this.pixelRatio());
     this.gl.outputColorSpace = THREE.SRGBColorSpace;
     this.gl.info.autoReset = true;
 
@@ -137,7 +144,7 @@ export class Renderer {
   resize() {
     const w = window.innerWidth;
     const h = window.innerHeight;
-    this.gl.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.gl.setPixelRatio(this.pixelRatio());
     this.gl.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
@@ -218,6 +225,34 @@ export class Renderer {
     }
     this.sky.position.copy(cam.position);
     this._camPos.copy(cam.position);
+  }
+
+  pixelRatio() {
+    const dpr = window.devicePixelRatio || 1;
+    const cap = { high: 2, medium: 1.25, low: 0.75, auto: this._autoScale }[this.quality] ?? 1.5;
+    return Math.max(0.5, Math.min(dpr, cap));
+  }
+
+  setQuality(q) {
+    this.quality = q;
+    this._autoScale = 1.5;
+    try { localStorage.setItem('mkbros:gfx', q); } catch { /* storage blocked */ }
+    this.resize();
+  }
+
+  /** Feed real frame times; in 'auto' mode drops (or restores) resolution to hold ~50+ fps. */
+  trackPerf(dt) {
+    if (this.quality !== 'auto' || dt <= 0 || dt > 0.25) return;
+    if (dt > 1 / 45) { this._slow += dt; this._fast = 0; } else { this._fast += dt; this._slow = Math.max(0, this._slow - dt * 0.5); }
+    if (this._slow > 1.5 && this._autoScale > 0.6) {
+      this._autoScale = Math.max(0.6, this._autoScale - 0.25);
+      this._slow = 0;
+      this.resize();
+    } else if (this._fast > 20 && this._autoScale < 1.5) {
+      this._autoScale = Math.min(1.5, this._autoScale + 0.25);
+      this._fast = 0;
+      this.resize();
+    }
   }
 
   render() {

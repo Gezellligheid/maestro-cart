@@ -19,6 +19,7 @@ export class Settings {
       });
     }
     $('vol-mute').addEventListener('change', (e) => this.audio.set('muted', e.target.checked));
+    $('gfx-quality').addEventListener('change', (e) => this.renderer?.setQuality(e.target.value));
   }
 
   _label(kind) {
@@ -32,6 +33,7 @@ export class Settings {
       this._label(kind);
     }
     $('vol-mute').checked = this.audio.settings.muted;
+    if (this.renderer) $('gfx-quality').value = this.renderer.quality;
   }
 
   open() {

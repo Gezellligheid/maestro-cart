@@ -50,6 +50,7 @@ class Game {
     this.audio = new Audio();
     this._sfxState = { rolling: false, coins: 0, boost: false, mega: false, countdown: false };
     this.settings = new Settings(this.audio);
+    this.settings.renderer = this.renderer;
     window.addEventListener('keydown', (e) => {
       if (e.target.tagName === 'INPUT') return;
       if (e.code === 'KeyM') {
@@ -858,6 +859,7 @@ class Game {
       this.renderer.updateOrbitCamera(time, b.cx, b.cz, 230);
     }
 
+    this.renderer.trackPerf(dt);
     this.renderer.render();
     this._updateStats(dt);
   }
