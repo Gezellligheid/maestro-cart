@@ -138,6 +138,13 @@
       <div id="hud-stats" class="absolute bottom-1 left-1/2 -translate-x-1/2 font-mono text-[10px] text-white/40"></div>
     </div>
 
+    <!-- Race over: waving chequered flag, then a fade into the podium -->
+    <div id="race-over" class="pointer-events-none fixed inset-0 z-40 hidden flex-col items-center justify-center gap-2 bg-black/25">
+      <canvas id="flag-canvas" width="520" height="300" class="w-[min(80vw,520px)] drop-shadow-2xl"></canvas>
+      <div class="title pop text-6xl sm:text-7xl">Race Over!</div>
+    </div>
+    <div id="fader" class="pointer-events-none fixed inset-0 z-[55] bg-black opacity-0 transition-opacity duration-700"></div>
+
     <!-- Podium ceremony -->
     <div id="podium-ui" class="pointer-events-none fixed inset-0 z-40 hidden">
       <div id="podium-title" class="title absolute left-1/2 top-6 -translate-x-1/2 text-center text-5xl sm:text-6xl">Podium</div>

@@ -22,6 +22,7 @@ import { HUD } from './ui/HUD.js';
 import { Lobby, Results, GarageUI } from './ui/Lobby.js';
 import { Settings } from './ui/Settings.js';
 import { PodiumCeremony } from './game/Podium.js';
+import { FinishFlag } from './ui/FinishFlag.js';
 import {
   MAX_KARTS, TOTAL_LAPS, SOLO_BOTS, NET_TICK_HZ, KART, CPU_NAMES,
 } from './game/constants.js';
@@ -108,6 +109,7 @@ class Game {
     });
     this._buildShowroom();
     this.podium = new PodiumCeremony(this.renderer, this.particles, this.audio, () => this._podiumDone());
+    this.finishFlag = new FinishFlag();
 
     // Fixed-step callbacks are created once so the frame loop never allocates closures.
     this._pre = (dt) => this._fixedPre(dt);
@@ -229,6 +231,7 @@ class Game {
 
   toMenu() {
     this.podium.stop();
+    this.finishFlag.cancel();
     clearTimeout(this._menuMusicTimer);
     this.audio.stopCountdown();
     this.audio.playMenu(1.5);
@@ -328,6 +331,7 @@ class Game {
 
   _setupRace(roster, countdownMs, seed) {
     this.podium.stop();
+    this.finishFlag.cancel();
     this.closeGarage();
     this._clearRace();
     this.round++;
@@ -528,9 +532,19 @@ class Game {
   }
 
   /** Race fully finished: run the podium ceremony (top 3), then the results screen. */
+  /** Race fully finished: chequered flag for everyone, then fade into the podium ceremony. */
   _startPodium() {
-    if (this.podium.active) return;
+    if (this.podium.active || this.finishFlag.active) return;
     this._bankCoins();
+    this.closeGarage();
+    this.results.show(false);
+    this.hud.show(false);
+    this.resultsTimer = 0;
+    this.finishFlag.play(() => this._beginPodium());
+  }
+
+  _beginPodium() {
+    if (this.podium.active || !this.inRace) return;
     const order = this.race.finishOrder.map((f) => f.slot);
     for (const k of this.race.standings) if (!order.includes(k.slot)) order.push(k.slot);
     const entries = order.slice(0, 3).map((slot, i) => {
@@ -551,7 +565,7 @@ class Game {
 
   _showResults() {
     this._bankCoins();
-    if (this.podium.active) return; // the podium shows results when it's done
+    if (this.podium.active || this.finishFlag.active) return; // the podium shows results when it's done
     this.results.show(true);
     this._refreshResults();
   }

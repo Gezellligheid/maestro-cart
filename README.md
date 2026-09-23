@@ -31,7 +31,8 @@ public broker handles signalling only; gameplay traffic is direct WebRTC.
   menu resets it. CPU karts get upgrades as rounds progress.
 - **CPU racers**: in a room the host fills empty grid slots with CPU karts (adjustable in the lobby,
   default: fill all 8 slots). The host simulates them and streams their state like any kart.
-- **Podium**: when a race fully finishes, a podium ceremony reveals 3rd, 2nd and 1st: each kart
+- **Podium**: when a race fully finishes, everyone sees a waving chequered flag ("Race Over!"), then
+  the screen fades into a podium ceremony that reveals 3rd, 2nd and 1st: each kart
   spins onto its step with confetti, then the results screen follows (Continue skips it).
 - **Ready-up**: in a room every player marks Ready in the lobby and again between rounds; the
   race starts when everyone is ready (the host can also skip the wait).
