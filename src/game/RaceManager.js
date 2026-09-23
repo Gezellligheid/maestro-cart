@@ -53,10 +53,13 @@ export class RaceManager {
     }
 
     const S = tr.samples;
-    const window = Math.floor(S / tr.checkpointCount / 2);
-    const cpIdx = tr.checkpointIdx[k.cpNext];
-    const rel = (k.trackIdx - cpIdx + S) % S;
-    if (rel < window) {
+    // A checkpoint counts once the kart is anywhere in the stretch just past it; the window
+    // spans almost two gaps, so a shortcut that skips a checkpoint still counts both of them.
+    const window = Math.floor((S / tr.checkpointCount) * 2) - 2;
+    for (let guard = 0; guard < 3 && !k.finished; guard++) {
+      const cpIdx = tr.checkpointIdx[k.cpNext];
+      const rel = (k.trackIdx - cpIdx + S) % S;
+      if (rel >= window) break;
       if (k.cpNext === 0) {
         if (k.lap > 0) {
           const lapTime = now - k.lapStart;

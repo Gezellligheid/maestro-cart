@@ -83,6 +83,19 @@ export class HUD {
     };
     path(); ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 11; ctx.stroke();
     path(); ctx.strokeStyle = '#3b3f46'; ctx.lineWidth = 7; ctx.stroke();
+    // Shortcuts as dashed dirt lines.
+    for (const sc of tr.shortcuts || []) {
+      ctx.beginPath();
+      tr.toMinimap(sc.ax + sc.ux * sc.dStart, sc.az + sc.uz * sc.dStart, size, pad, p);
+      ctx.moveTo(p.x, p.y);
+      tr.toMinimap(sc.ax + sc.ux * sc.dEnd, sc.az + sc.uz * sc.dEnd, size, pad, p);
+      ctx.lineTo(p.x, p.y);
+      ctx.setLineDash([3, 3]);
+      ctx.strokeStyle = '#d19a5b';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
     // start line
     tr.toMinimap(tr.px[0], tr.pz[0], size, pad, p);
     ctx.fillStyle = '#ffd23f';

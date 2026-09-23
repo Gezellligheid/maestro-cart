@@ -16,6 +16,7 @@ const MAX_BARRIER = MAX_HALF_WIDTH + CURB_WIDTH + BARRIER_GAP;
 const EDGE_STD = BASE_WIDTH + CURB_WIDTH + BARRIER_GAP + 0.7; // deck edge where width is pinned
 const BARRIER_STEP = 3; // samples per barrier segment
 const CHECKPOINTS = 12;
+const SHORTCUT_HALF = 3.4; // dirt shortcut half-width
 const GROUND_SIZE = 900;
 const OVERPASS_RISE = 7.5;
 const BRIDGE_RISE = 5.5;
@@ -86,6 +87,7 @@ export class Track {
     this.pads = [];
     this.hazards = [];
     this.movers = [];
+    this.shortcuts = [];
     this.crossings = [];
 
     this.group = null;
@@ -131,10 +133,12 @@ export class Track {
     this._pickMood();
     this.renderer.setAtmosphere(this.sky);
     this._prepareTerrain(rand);
+    this._planShortcuts();
     if (!t.space) this._buildGround();
     this._buildRoad();
     this._buildRoadCollider();
     this._buildBarriers();
+    this._buildShortcuts();
     this._buildGantry();
     this._buildArches();
     this._buildFeatures();
@@ -844,6 +848,13 @@ export class Track {
       if (r > this.oceanRadius) y = -1.5;
       else if (r > this.oceanRadius - 30) y *= (this.oceanRadius - r) / 30;
     }
+    for (const sc of this.shortcuts) {
+      const sd = this._shortcutDist(sc, x, z, this._sd || (this._sd = { dist: 0, d: 0 }));
+      if (sd.dist < 12) {
+        const py = this._shortcutY(sc, sc.ax + sc.ux * sd.d, sc.az + sc.uz * sd.d, sd.d) - 0.5;
+        y += (py - y) * (1 - smooth01(sd.dist / 12));
+      }
+    }
     out.y = y; out.d = d; out.j = j;
     return out;
   }
@@ -1035,6 +1046,7 @@ export class Track {
     let n = 0;
     for (const side of [1, -1]) {
       for (let k = 0; k < segments; k++) {
+        if (this._barrierCut(side, k)) continue;
         const i = k * BARRIER_STEP;
         this.pointAt(i, side * this.barrierOffset(i), 0, a);
         this.pointAt(i + BARRIER_STEP, side * this.barrierOffset(i + BARRIER_STEP), 0, b);
@@ -1052,10 +1064,311 @@ export class Track {
         n++;
       }
     }
+    mesh.count = n;
     mesh.instanceMatrix.needsUpdate = true;
     mesh.instanceColor.needsUpdate = true;
     mesh.computeBoundingSphere();
     this.group.add(mesh);
+  }
+
+  // ------------------------------------------------------------------ shortcuts
+
+  /**
+   * Corner-cutting dirt paths through the infield of tight corners: a gap in the inside
+   * barrier opens onto a fenced dirt track that rejoins at the corner exit. The dirt is a bit
+   * slower than tarmac, but the path is much shorter (a mushroom makes it a steal).
+   */
+  _planShortcuts() {
+    this.shortcuts = [];
+    const t = this.theme;
+    if (t.space) return;
+    const rand = mulberry32(this.seed ^ 0x5c0f7c07);
+    if (rand() < 0.2) return;
+    const want = rand() < 0.35 ? 2 : 1;
+    const seg = this.segmentLength;
+    const busy = [];
+    const startA = S - Math.ceil(70 / seg), startB = S + Math.ceil(60 / seg);
+    busy.push([startA, startB], [startA - S, startB - S]);
+    for (const br of this.bridges) busy.push([br.a - 10, br.b + 10]);
+    for (const tu of this.tunnels) busy.push([tu.a - 14, tu.b + 14]);
+    for (const jp of this.jumps) busy.push([jp.a - 8, jp.b + 8]);
+    for (const c of this.crossings) busy.push([c.lower - 45, c.lower + 45]);
+    const isBusy = (a, b) => busy.some(([c, d]) => [-S, 0, S].some((sh) => a <= d + sh && b >= c + sh));
+    const minL = Math.ceil(30 / seg), maxL = Math.min(100, Math.floor(160 / seg));
+    const pa = { x: 0, z: 0 }, pb = { x: 0, z: 0 }, q = { x: 0, z: 0 };
+    // Cumulative length along each road edge, for quick arc lengths.
+    const edgeLen = {};
+    for (const side of [-1, 1]) {
+      const acc = new Float64Array(2 * S + 1);
+      this.pointAt(0, side * this.roadLimitAt(0), 0, q);
+      let lx = q.x, lz = q.z;
+      for (let i = 1; i <= 2 * S; i++) {
+        this.pointAt(i, side * this.roadLimitAt(i), 0, q);
+        acc[i] = acc[i - 1] + Math.hypot(q.x - lx, q.z - lz);
+        lx = q.x; lz = q.z;
+      }
+      edgeLen[side] = acc;
+    }
+    const cands = [];
+    for (let a = 0; a < S; a += 3) {
+      for (let L = minL; L <= maxL; L += 2) {
+        const b = a + L;
+        if (isBusy(a, b)) continue;
+        const m = circ(a + (L >> 1));
+        const cx = (this.px[circ(a)] + this.px[circ(b)]) / 2, cz = (this.pz[circ(a)] + this.pz[circ(b)]) / 2;
+        const midLat = -(cx - this.px[m]) * this.tz[m] + (cz - this.pz[m]) * this.tx[m];
+        if (Math.abs(midLat) < this.barrierOffset(m) + SHORTCUT_HALF + 3) continue; // gentle bend: nothing to cut
+        const side = Math.sign(midLat);
+        const la = side * this.roadLimitAt(a), lb = side * this.roadLimitAt(b);
+        this.pointAt(a, la, 0, pa);
+        this.pointAt(b, lb, 0, pb);
+        const dx = pb.x - pa.x, dz = pb.z - pa.z;
+        const chord = Math.hypot(dx, dz);
+        if (chord < 14 || chord > 90) continue;
+        const arc = edgeLen[side][b] - edgeLen[side][a];
+        if (arc - chord < 12 || arc - chord > 60 || arc / chord > 2.2) continue; // worth it, not a lap-breaker
+        if (Math.abs(this.roadY(a, la) - this.roadY(b, lb)) / chord > 0.12) continue;
+        const ux = dx / chord, uz = dz / chord;
+        const sinA = Math.abs(this.tx[circ(a)] * uz - this.tz[circ(a)] * ux);
+        const sinB = Math.abs(this.tx[circ(b)] * uz - this.tz[circ(b)] * ux);
+        if (Math.min(sinA, sinB) < 0.45) continue;
+        cands.push({ a, b, side, saving: arc - chord });
+      }
+    }
+    cands.sort((u, v) => v.saving - u.saving);
+    let tries = 0;
+    for (const c of cands) {
+      if (this.shortcuts.length >= want || tries > 60) break;
+      if (this.shortcuts.some((s) => circDist(s.a, c.a) < 80 || circDist(s.b, c.b) < 80)) continue;
+      tries++;
+      const sc = this._shortcutPlan(c);
+      if (sc) this.shortcuts.push(sc);
+    }
+  }
+
+  _shortcutPlan({ a, b, side }) {
+    const HALF = SHORTCUT_HALF;
+    const la = side * this.roadLimitAt(a), lb = side * this.roadLimitAt(b);
+    const A = this.pointAt(a, la, 0, { x: 0, z: 0 });
+    const B = this.pointAt(b, lb, 0, { x: 0, z: 0 });
+    const len = Math.hypot(B.x - A.x, B.z - A.z);
+    const ux = (B.x - A.x) / len, uz = (B.z - A.z) / len;
+    const sc = {
+      a, b, side, ax: A.x, az: A.z, ux, uz, nx: -uz, nz: ux, len,
+      ya: this.roadY(a, la), yb: this.roadY(b, lb), dStart: 0, dEnd: len, cut: new Set(), fences: [],
+    };
+    const at = (d, off) => ({ x: A.x + ux * d + sc.nx * off, z: A.z + uz * d + sc.nz * off });
+
+    // Where each fence line leaves the road (crosses the inside barrier line) at both ends.
+    const cross = (off, fromEnd) => {
+      for (let k = 0; k <= 80; k++) {
+        const d = fromEnd ? len + 6 - k * 0.25 : -6 + k * 0.25;
+        const p = at(d, off);
+        const j = this.nearestIndex(p.x, p.z, circ(fromEnd ? b : a));
+        const out = this.lastLateral * side >= this.barrierOffset(j);
+        if (k === 0 && out) return null;
+        if (out) return { d, j, x: p.x, z: p.z };
+      }
+      return null;
+    };
+    const X = [];
+    for (const e of [-1, 1]) {
+      const xa = cross(e * (HALF + 0.4), false), xb = cross(e * (HALF + 0.4), true);
+      if (!xa || !xb || xb.d - xa.d < 6) return null;
+      X.push({ e, xa, xb });
+    }
+    sc.dStart = Math.min(X[0].xa.d, X[1].xa.d) - 1.5;
+    sc.dEnd = Math.max(X[0].xb.d, X[1].xb.d) + 1.5;
+
+    // The middle of the corridor must stay clear of other track parts and features (the
+    // corner's own barrier is checked below, once we know which segments get cut).
+    const mA = Math.max(X[0].xa.d, X[1].xa.d) + 1, mB = Math.min(X[0].xb.d, X[1].xb.d) - 1;
+    for (let d = mA; d <= mB; d += 1.5) {
+      const p = at(d, 0);
+      if (this._nearFeature(p.x, p.z)) return null;
+      if (this.theme.ocean && Math.hypot(p.x, p.z) > this.oceanRadius - 25) return null;
+      for (let j = 0; j < S; j += 2) {
+        if (this._inRange(j, a - 25, b + 25)) continue;
+        const r = this.barrierOffset(j) + HALF + 10;
+        if ((p.x - this.px[j]) ** 2 + (p.z - this.pz[j]) ** 2 < r * r) return null;
+      }
+    }
+
+    // Inside-barrier segments the corridor passes through get removed.
+    const P0 = { x: 0, z: 0 }, P1 = { x: 0, z: 0 };
+    const inCorridor = (p) => {
+      const d = (p.x - A.x) * ux + (p.z - A.z) * uz;
+      const l = (p.x - A.x) * sc.nx + (p.z - A.z) * sc.nz;
+      return Math.abs(l) < HALF + 0.6 && d > sc.dStart - 2 && d < sc.dEnd + 2;
+    };
+    const segs = Math.floor(S / BARRIER_STEP);
+    const ranges = [];
+    for (const end of [a, b]) {
+      let k0 = Infinity, k1 = -Infinity;
+      for (let k = 0; k < segs; k++) {
+        const i = k * BARRIER_STEP;
+        if (circDist(i, end) > 30) continue;
+        this.pointAt(i, side * this.barrierOffset(i), 0, P0);
+        this.pointAt(i + BARRIER_STEP, side * this.barrierOffset(i + BARRIER_STEP), 0, P1);
+        const mid = { x: (P0.x + P1.x) / 2, z: (P0.z + P1.z) / 2 };
+        if (inCorridor(P0) || inCorridor(P1) || inCorridor(mid)) {
+          sc.cut.add(k);
+          // Unwrap around the start line so the range stays contiguous.
+          const ku = k + (end - i > S / 2 ? segs : i - end > S / 2 ? -segs : 0);
+          k0 = Math.min(k0, ku); k1 = Math.max(k1, ku);
+        }
+      }
+      if (k0 > k1) return null;
+      ranges.push([k0, k1]);
+    }
+    // Every barrier we keep must stay outside the corridor.
+    for (let j = a - 25; j <= b + 25; j++) {
+      const i = circ(j);
+      if (sc.cut.has(Math.floor(i / BARRIER_STEP))) continue;
+      this.pointAt(i, side * this.barrierOffset(i), 0, P0);
+      const d = (P0.x - A.x) * ux + (P0.z - A.z) * uz;
+      const l = (P0.x - A.x) * sc.nx + (P0.z - A.z) * sc.nz;
+      if (Math.abs(l) < HALF + 0.5 && d > sc.dStart && d < sc.dEnd) return null;
+    }
+
+    // Fences along both sides, joined to the cut barrier ends so there are no holes.
+    const barrierEnd = (k) => {
+      const i = k * BARRIER_STEP;
+      const p = this.pointAt(i, side * this.barrierOffset(i), 0, { x: 0, z: 0 });
+      return { x: p.x, z: p.z, y: this.roadY(i, side * this.barrierOffset(i)) };
+    };
+    const [ra, rb] = ranges;
+    const endsA = [barrierEnd(ra[0]), barrierEnd(ra[1] + 1)]; // upstream, downstream
+    const endsB = [barrierEnd(rb[0]), barrierEnd(rb[1] + 1)];
+    const lowA = circDist(X[0].xa.j, a - 60) < circDist(X[1].xa.j, a - 60) ? 0 : 1;
+    const lowB = circDist(X[0].xb.j, b - 60) < circDist(X[1].xb.j, b - 60) ? 0 : 1;
+    for (let n = 0; n < 2; n++) {
+      const { xa, xb } = X[n];
+      const ea = endsA[n === lowA ? 0 : 1], eb = endsB[n === lowB ? 0 : 1];
+      const pts = [ea];
+      for (let d = xa.d; d < xb.d; d += 3) {
+        const p = at(d, X[n].e * (HALF + 0.4));
+        pts.push({ x: p.x, z: p.z, y: this._shortcutY(sc, p.x, p.z, d) });
+      }
+      pts.push({ x: xb.x, z: xb.z, y: this._shortcutY(sc, xb.x, xb.z, xb.d) }, eb);
+      sc.fences.push(pts);
+    }
+    return sc;
+  }
+
+  /** Height of the dirt path; blends into the road surface at both ends. */
+  _shortcutY(sc, x, z, d) {
+    const t = Math.max(0, Math.min(1, d / sc.len));
+    let y = sc.ya + (sc.yb - sc.ya) * t;
+    const endDist = Math.min(d, sc.len - d);
+    if (endDist < 8) {
+      const j = this.nearestIndex(x, z, circ(d < sc.len / 2 ? sc.a : sc.b));
+      const e = this.barrierOffset(j) + 0.7;
+      const ry = this.roadY(j, Math.max(-e, Math.min(e, this.lastLateral)));
+      y += (ry - y) * smooth01(1 - Math.max(0, endDist) / 8);
+    }
+    return y;
+  }
+
+  /** Distance from (x, z) to a shortcut corridor (0 inside), and the path height there. */
+  _shortcutDist(sc, x, z, out) {
+    const d = (x - sc.ax) * sc.ux + (z - sc.az) * sc.uz;
+    const l = (x - sc.ax) * sc.nx + (z - sc.az) * sc.nz;
+    const along = Math.max(0, sc.dStart - d, d - sc.dEnd);
+    const across = Math.max(0, Math.abs(l) - SHORTCUT_HALF);
+    out.dist = Math.hypot(along, across);
+    out.d = Math.max(sc.dStart, Math.min(sc.dEnd, d));
+    return out;
+  }
+
+  /** True when (x, z) is on a shortcut's dirt path. */
+  shortcutAt(x, z) {
+    for (const sc of this.shortcuts) {
+      const d = (x - sc.ax) * sc.ux + (z - sc.az) * sc.uz;
+      if (d < sc.dStart - 1 || d > sc.dEnd + 1) continue;
+      if (Math.abs((x - sc.ax) * sc.nx + (z - sc.az) * sc.nz) <= SHORTCUT_HALF + 0.6) return true;
+    }
+    return false;
+  }
+
+  /** Is barrier segment k on this side cut open for a shortcut? */
+  _barrierCut(side, k) {
+    for (const sc of this.shortcuts) if (sc.side === side && sc.cut.has(k)) return true;
+    return false;
+  }
+
+  _buildShortcuts() {
+    if (!this.shortcuts.length) return;
+    const t = this.theme;
+    const DIRT = { meadow: 0xa47a4e, desert: 0xb88a52, snow: 0xdfe8f0, mushroom: 0x9a6b45, beach: 0xe3cc94, volcano: 0x4e3a33, ghost: 0x5a4a3c };
+    const WOOD = { volcano: 0x2e2626, ghost: 0x3e3448 };
+    const dirt = new THREE.Color(DIRT[t.id] ?? 0xa47a4e);
+    const rut = dirt.clone().multiplyScalar(0.82).getHex();
+    const edge = new THREE.Color(t.ground).multiplyScalar(0.8).getHex();
+    const wood = WOOD[t.id] ?? 0x8a5a2b;
+    const rand = mulberry32(this.seed ^ 0xd1e7);
+    const rb = new RibbonBuilder();
+    const fence = [];
+    const H = SHORTCUT_HALF;
+    // Lateral stops across the path: grass edge, dirt, wheel ruts, dirt, grass edge.
+    const stops = [-H - 0.5, -H, -1.7, -0.9, 0.9, 1.7, H, H + 0.5];
+    const shade = (k) => (k === 0 || k === 6 ? edge : k === 2 || k === 4 ? rut : 0);
+    for (const sc of this.shortcuts) {
+      const rows = [];
+      const n = Math.max(2, Math.ceil((sc.dEnd - sc.dStart) / 1.5));
+      for (let r = 0; r <= n; r++) {
+        const d = sc.dStart + ((sc.dEnd - sc.dStart) * r) / n;
+        const cx = sc.ax + sc.ux * d, cz = sc.az + sc.uz * d;
+        rows.push({ d, cx, cz, y: this._shortcutY(sc, cx, cz, d) });
+      }
+      const P = (row, off, yOff = 0.07) => [row.cx + sc.nx * off, row.y + yOff, row.cz + sc.nz * off];
+      for (let r = 0; r < n; r++) {
+        const r0 = rows[r], r1 = rows[r + 1];
+        const base = dirt.clone().multiplyScalar(0.92 + rand() * 0.12).getHex();
+        for (let k = 0; k < stops.length - 1; k++) {
+          const lo = stops[k], hi = stops[k + 1];
+          const a = P(r0, hi), b = P(r1, hi), c = P(r1, lo), d = P(r0, lo);
+          rb.quad(...a, ...b, ...c, ...d, shade(k) || base);
+        }
+        // Skirts down the sides so the path never floats above the ground.
+        for (const s of [-1, 1]) {
+          const off = s * (H + 0.5);
+          const a = P(r0, off), b = P(r1, off);
+          const a2 = [a[0], a[1] - 1.6, a[2]], b2 = [b[0], b[1] - 1.6, b[2]];
+          rb.quad(...a, ...b, ...b2, ...a2, edge);
+          rb.quad(...b, ...a, ...a2, ...b2, edge);
+        }
+      }
+      // Driving surface: one trimesh strip a bit wider than the dirt (fences keep karts on it).
+      const verts = new Float32Array(rows.length * 6);
+      const idx = new Uint32Array((rows.length - 1) * 6);
+      rows.forEach((row, i) => {
+        const e = H + 1.4;
+        verts.set([row.cx - sc.nx * e, row.y, row.cz - sc.nz * e, row.cx + sc.nx * e, row.y, row.cz + sc.nz * e], i * 6);
+        if (i < rows.length - 1) idx.set([i * 2, i * 2 + 1, i * 2 + 2, i * 2 + 1, i * 2 + 3, i * 2 + 2], i * 6);
+      });
+      this.wallColliders.push(this.physics.addTrimesh(verts, idx));
+
+      // Wooden fences: posts, two rails, and a wall collider per piece.
+      for (const pts of sc.fences) {
+        for (let k = 0; k < pts.length - 1; k++) {
+          const p = pts[k], q = pts[k + 1];
+          const dx = q.x - p.x, dz = q.z - p.z;
+          const len = Math.hypot(dx, dz);
+          if (len < 0.05) continue;
+          const yaw = Math.atan2(dx, dz);
+          const mx = (p.x + q.x) / 2, mz = (p.z + q.z) / 2, my = (p.y + q.y) / 2;
+          fence.push(box(0.24, 1.2, 0.24, p.x, p.y + 0.6, p.z, wood));
+          fence.push(box(0.1, 0.14, len + 0.1, mx, my + 0.45, mz, wood, 0, yaw, 0));
+          fence.push(box(0.1, 0.14, len + 0.1, mx, my + 0.95, mz, wood, 0, yaw, 0));
+          this.wallColliders.push(this.physics.addWall(mx, my + 1.2, mz, 0.2, 2.2, len / 2 + 0.15, yaw));
+        }
+        const last = pts[pts.length - 1];
+        fence.push(box(0.24, 1.2, 0.24, last.x, last.y + 0.6, last.z, wood));
+      }
+    }
+    this.group.add(new THREE.Mesh(rb.build(), this.renderer.toon({ vertexColors: true })));
+    if (fence.length) this.group.add(new THREE.Mesh(merge(fence), this.renderer.toon({ vertexColors: true })));
   }
 
   _buildGantry() {
@@ -1277,6 +1590,9 @@ export class Track {
 
   /** Keep scenery out of ponds, overpasses and tunnel hills. */
   _nearFeature(x, z) {
+    for (const sc of this.shortcuts) {
+      if (this._shortcutDist(sc, x, z, this._sd || (this._sd = { dist: 0, d: 0 })).dist < 6) return true;
+    }
     for (const list of [this.bridges, this.tunnels]) {
       for (const f of list) {
         const mid = circ(Math.round((f.a + f.b) / 2));
@@ -1392,6 +1708,12 @@ export class Track {
     const tmp = { x: 0, z: 0 };
     const TOTAL = 30;
     const boxRows = this.boxRows.map((r) => r.i);
+    for (const sc of this.shortcuts) {
+      for (const f of [0.35, 0.5, 0.65]) {
+        const d = sc.len * f, x = sc.ax + sc.ux * d, z = sc.az + sc.uz * d;
+        spots.push({ x, z, y: this._shortcutY(sc, x, z, d) });
+      }
+    }
     while (spots.length < TOTAL) {
       const i = 30 + Math.floor(rand() * (S - 50));
       if (boxRows.some((r) => Math.abs(r - i) < 8)) continue;

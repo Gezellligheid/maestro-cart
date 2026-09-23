@@ -195,7 +195,10 @@ export class Kart {
 
     const hazard = this.track.hazardAt(this.trackIdx, this.trackLateral);
     // Sand traps behave like off-road.
-    this.offroad = Math.abs(this.trackLateral) > this.track.roadLimitAt(this.trackIdx) || hazard === 'sand';
+    const beyond = Math.abs(this.trackLateral) > this.track.roadLimitAt(this.trackIdx);
+    // Shortcut dirt paths: only a little slower than tarmac (grass is much worse).
+    this.onDirt = beyond && this.track.shortcutAt(this.x, this.z);
+    this.offroad = (beyond && !this.onDirt) || hazard === 'sand';
     this.onIce = hazard === 'ice';
     this.inWater = hazard === 'water';
     if (this.padCooldown > 0) this.padCooldown -= dt;
@@ -213,6 +216,7 @@ export class Kart {
     const topSpeed = C.maxSpeed * this.speedScale * M.speed;
     let maxSpeed = topSpeed * (1 + Math.min(this.coins, C.coinBonusCap) * C.coinSpeedBonus);
     if (this.offroad) maxSpeed *= C.offroadFactor;
+    if (this.onDirt) maxSpeed *= 0.85;
     const boosting = this.boostTimer > 0;
     if (boosting) {
       maxSpeed = topSpeed * C.boostMultiplier;

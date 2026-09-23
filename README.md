@@ -28,6 +28,9 @@ public broker handles signalling only; gameplay traffic is direct WebRTC.
   spinning fire bars, ghosts, bouncing stars) run on the race clock, so every peer sees them in the
   same spot; touching one spins you out. Some tracks race at sunset or night (stars + moon), with rain
   or snowfall, and water crossings slow you down.
+- **Shortcuts**: many tracks have a fenced dirt path through the infield of a tight corner (a gap
+  in the inside barrier; dashed on the minimap). Dirt is a little slower than tarmac, but the path
+  is much shorter, and there are coins on it.
 - **Garage** (in the room lobby and between rounds): coins you're holding when a round ends (plus a
   placement bonus) are banked. Spend them on Top Speed, Acceleration, Handling and Drift Boost, and on
   cosmetic parts (bodies, spoilers, wheels, headgear) plus paint/accent colours, previewed in 3D and
