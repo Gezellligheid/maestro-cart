@@ -444,6 +444,24 @@ const DECOR = {
   },
 };
 
+/** Stars and a moon for night-time tracks (one instanced + one plain mesh, unaffected by fog). */
+export function buildNightSky(group, rand) {
+  const mat = new THREE.MeshBasicMaterial({ vertexColors: true, fog: false });
+  const star = paint(new THREE.OctahedronGeometry(1, 0).toNonIndexed(), 0xffffff);
+  star.deleteAttribute('uv');
+  const stars = new THREE.InstancedMesh(star, mat, 350);
+  stars.count = 0;
+  for (let n = 0; n < 350; n++) {
+    const u = 0.15 + rand() * 0.85, a = rand() * Math.PI * 2;
+    const rr = Math.sqrt(1 - u * u), d = 650;
+    put(stars, Math.cos(a) * rr * d, u * d, Math.sin(a) * rr * d, 0, 0.8 + rand() * 1.6);
+  }
+  finish(stars, group);
+  const moon = sphere(28, 20, 14, -260, 330, -380, 0xf5f0d8);
+  if (moon.attributes.uv) moon.deleteAttribute('uv');
+  group.add(new THREE.Mesh(moon, new THREE.MeshBasicMaterial({ vertexColors: true, fog: false })));
+}
+
 // ------------------------------------------------------------------ trackside dressing
 
 /** Grandstand with a crowd beside the start straight (one merged mesh). */

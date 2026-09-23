@@ -23,6 +23,8 @@ import { Lobby, Results, GarageUI } from './ui/Lobby.js';
 import { Settings } from './ui/Settings.js';
 import { PodiumCeremony } from './game/Podium.js';
 import { FinishFlag } from './ui/FinishFlag.js';
+import { Movers } from './game/Movers.js';
+import { Weather } from './engine/Weather.js';
 import {
   MAX_KARTS, TOTAL_LAPS, SOLO_BOTS, NET_TICK_HZ, KART, CPU_NAMES,
 } from './game/constants.js';
@@ -110,6 +112,10 @@ class Game {
     this._buildShowroom();
     this.podium = new PodiumCeremony(this.renderer, this.particles, this.audio, () => this._podiumDone());
     this.finishFlag = new FinishFlag();
+    this.movers = new Movers(this.renderer, this.particles);
+    this.movers.setTrack(this.track);
+    this.weather = new Weather(this.renderer);
+    this.weather.set(this.track.weather);
 
     // Fixed-step callbacks are created once so the frame loop never allocates closures.
     this._pre = (dt) => this._fixedPre(dt);
@@ -339,6 +345,8 @@ class Game {
     this.banked = false;
     // Every round is a brand-new circuit; all peers build the same one from the shared seed.
     this.track.generate(seed);
+    this.movers.setTrack(this.track);
+    this.weather.set(this.track.weather);
     this.items.syncWithTrack();
     this.hud.rebuildMinimap();
     const botMods = modsFromLevels(botLevels(this.round));
@@ -392,7 +400,7 @@ class Game {
     this.hud.resetCache();
     this.hud.clearCenter();
     this.hud.show(true);
-    this.hud.subtitle(`Round ${this.round} · ${this.track.name}`, 3.2);
+    this.hud.subtitle(`Round ${this.round} · ${this.track.name}${this.track.moodLabel ? ' · ' + this.track.moodLabel : ''}`, 3.2);
     document.getElementById('results-track').textContent = `Round ${this.round} · ${this.track.name}`;
     const lk = this.localKart;
     this.renderer.updateChaseCamera(lk.x, lk.y - 0.6, lk.z, lk.yaw, 0, false, 0, true);
@@ -815,6 +823,17 @@ class Game {
       this.kartRenderer.update(this.karts, this.physics.alpha, dt);
     }
     this.items.render(time, this.karts);
+    // Moving hazards run on the race clock so every peer sees them in the same place.
+    this.movers.update(this.inRace ? this.race.elapsed(this.now) / 1000 : time);
+    if (this.inRace && !this.podium.active) {
+      this.movers.collide(this.karts, (k) => {
+        if (k !== this.localKart) return;
+        this.audio.blip('hit');
+        this.hud.subtitle('Ouch!', 1);
+        this.renderer.addShake(0.6);
+      });
+    }
+    this.weather.update(dt, this.renderer.camera.position, !this.podium.active && !this.garageUI.visible);
 
     const lk = this.localKart;
     if (this.podium.active) {

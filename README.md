@@ -24,6 +24,10 @@ public broker handles signalling only; gameplay traffic is direct WebRTC.
   Dune Dash (pyramids, sand traps), Frosty Summit (snowmen, ice), Toadstool Gorge (giant mushrooms),
   Coconut Cove (palms, ocean), Magma Keep (lava, torches, volcano), Star Road (rainbow road in space)
   and Spooky Hollow (plank road, ghosts, pumpkins).
+- **Moving hazards** per theme (cows, tumbleweeds, rolling snowballs, hopping mushrooms, crabs,
+  spinning fire bars, ghosts, bouncing stars) run on the race clock, so every peer sees them in the
+  same spot; touching one spins you out. Some tracks race at sunset or night (stars + moon), with rain
+  or snowfall, and water crossings slow you down.
 - **Garage** (in the room lobby and between rounds): coins you're holding when a round ends (plus a
   placement bonus) are banked. Spend them on Top Speed, Acceleration, Handling and Drift Boost, and on
   cosmetic parts (bodies, spoilers, wheels, headgear) plus paint/accent colours, previewed in 3D and

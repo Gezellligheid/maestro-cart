@@ -1,6 +1,10 @@
 import * as THREE from 'three';
 import { RibbonBuilder, box, cylinder, merge, mulberry32, paint } from '../engine/geometry.js';
-import { THEMES, rainbowColor, buildScenery, buildGrandstand, buildTireStacks } from './TrackDecor.js';
+import { THEMES, rainbowColor, buildScenery, buildGrandstand, buildTireStacks, buildNightSky } from './TrackDecor.js';
+
+// Moving hazard per theme (see Movers.js).
+const MOVER_KIND = { meadow: 'cow', desert: 'tumbleweed', snow: 'snowball', mushroom: 'hopper', beach: 'crab', volcano: 'firebar', ghost: 'ghost', rainbow: 'star' };
+const WATER_THEMES = new Set(['meadow', 'mushroom', 'beach', 'ghost']);
 
 const S = 720; // centre-line samples
 const BASE_WIDTH = 9; // road half-width where width is pinned (start, bridges, tunnels)
@@ -81,6 +85,7 @@ export class Track {
     this.jumps = [];
     this.pads = [];
     this.hazards = [];
+    this.movers = [];
     this.crossings = [];
 
     this.group = null;
@@ -123,7 +128,8 @@ export class Track {
     this._dispose();
     this.group = new THREE.Group();
     this.renderer.scene.add(this.group);
-    this.renderer.setAtmosphere(t.sky);
+    this._pickMood();
+    this.renderer.setAtmosphere(this.sky);
     this._prepareTerrain(rand);
     if (!t.space) this._buildGround();
     this._buildRoad();
@@ -147,6 +153,24 @@ export class Track {
     const theme = THEMES[Math.floor(rand() * THEMES.length)];
     rand(); rand(); // name rolls
     return { theme: theme.id, style: styleFor(rand()) };
+  }
+
+  /** Time of day and weather: day / sunset / night, and rain or snowfall on some tracks. */
+  _pickMood() {
+    const t = this.theme;
+    const r = mulberry32(this.seed ^ 0x6d6f6f64);
+    const moody = ['meadow', 'desert', 'snow', 'mushroom', 'beach'].includes(t.id);
+    const m = r();
+    this.mood = moody ? (m < 0.6 ? 'day' : m < 0.8 ? 'sunset' : 'night') : 'day';
+    const w = r();
+    this.weather = t.id === 'snow' ? (w < 0.5 ? 'snow' : 'none')
+      : ['meadow', 'mushroom', 'beach', 'ghost'].includes(t.id) && w < 0.25 ? 'rain' : 'none';
+    let sky = { ...t.sky };
+    if (this.mood === 'sunset') sky = { ...sky, top: 0x2b3a8f, horizon: 0xff9966, hemi: sky.hemi * 0.8, sun: sky.sun * 0.7 };
+    if (this.mood === 'night') sky = { ...sky, top: 0x03050f, horizon: 0x16213f, fogNear: 80, fogFar: 330, hemi: 0.6, sun: 0.45 };
+    if (this.weather === 'rain') sky = { ...sky, horizon: 0x7d8a99, top: 0x4a5566, fogNear: sky.fogNear * 0.7, fogFar: sky.fogFar * 0.75, hemi: sky.hemi * 0.85, sun: sky.sun * 0.6 };
+    this.sky = sky;
+    this.moodLabel = [this.mood !== 'day' ? this.mood[0].toUpperCase() + this.mood.slice(1) : '', this.weather !== 'none' ? this.weather[0].toUpperCase() + this.weather.slice(1) : ''].filter(Boolean).join(' · ');
   }
 
   _dispose() {
@@ -488,6 +512,7 @@ export class Track {
     this.jumps = [];
     this.pads = [];
     this.hazards = [];
+    this.movers = [];
 
     const blocked = [];
     const reserve = (a, b) => blocked.push([a, b]);
@@ -551,6 +576,16 @@ export class Track {
     place(bridgeCount, 120, 0.9, this.bridges, { type: t.space ? 'span' : 'water', rise: BRIDGE_RISE });
     if (!t.space) place(rand() < 0.5 ? 1 : rand() < 0.5 ? 2 : 0, 75, 0.8, this.tunnels, {}, TUNNEL_HILL.width + MAX_BARRIER + 3);
     place(range(t.jumps), 11, 0.25, this.jumps, {});
+    // Moving hazards (cows, snowballs, fire bars…) on fairly straight bits.
+    place(2 + Math.floor(rand() * 3), 10, 0.5, this.movers, { kind: MOVER_KIND[t.id] });
+    for (const m of this.movers) {
+      m.i = Math.round((m.a + m.b) / 2);
+      m.period = 3 + rand() * 2.5;
+      m.phase = rand() * Math.PI * 2;
+      m.side = rand() < 0.5 ? -1 : 1;
+    }
+    this._waters = [];
+    if (WATER_THEMES.has(t.id) && rand() < 0.7) place(1 + Math.floor(rand() * 2), 12, 0.6, this._waters, {});
     for (const br of this.bridges) {
       if (br.type === 'overpass') continue;
       const ramp = Math.round(38 / seg);
@@ -668,6 +703,12 @@ export class Track {
       if (!straight(a, a + padLen)) continue;
       const w = this.width[circ(a)] - 2.4;
       this.pads.push({ a, b: a + padLen, lat: (rand() * 2 - 1) * w, half: 1.9 });
+    }
+
+    // Water crossings run across the whole road.
+    for (const wtr of this._waters) {
+      const w = this.width[circ(wtr.a)] + CURB_WIDTH;
+      this.hazards.push({ type: 'water', a: wtr.a, b: wtr.b, lo: -w, hi: w });
     }
 
     // Surface hazards (ice / sand).
@@ -912,8 +953,10 @@ export class Track {
       for (let i = p.a; i < p.b; i++) {
         const shade = p.type === 'ice'
           ? ((i - p.a) % 4 < 2 ? 0xd6f1ff : 0xc4e8fb)
-          : ((i - p.a) % 3 === 0 ? 0xc9a063 : 0xd9b26f);
-        band(i, () => p.lo, () => p.hi, 0.075, shade);
+          : p.type === 'water'
+            ? ((i - p.a) % 3 === 0 ? 0x5bb8ef : 0x3a9ad9)
+            : ((i - p.a) % 3 === 0 ? 0xc9a063 : 0xd9b26f);
+        band(i, () => p.lo, () => p.hi, p.type === 'water' ? 0.095 : 0.075, shade);
       }
     }
 
@@ -1261,6 +1304,7 @@ export class Track {
       return null;
     };
     buildScenery({ track: this, theme: t, rand, group: this.group, renderer: this.renderer, spot });
+    if (this.mood === 'night') buildNightSky(this.group, rand);
     if (!t.space) {
       buildGrandstand(this, this.renderer, this.group, rand);
       buildTireStacks(this, this.renderer, this.group);
