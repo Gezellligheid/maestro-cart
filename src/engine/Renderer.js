@@ -33,7 +33,7 @@ export class Renderer {
 
     this._setupLights();
     this._buildSky();
-    this.shadows = new BlobShadows(this, 96);
+    this.shadows = new BlobShadows(this, 160);
 
     // Chase-camera scratch state (no per-frame allocation).
     this._camPos = new THREE.Vector3(0, 20, -30);

@@ -503,7 +503,19 @@ export class Track {
     const startA = S - Math.ceil(60 / seg), startB = S + Math.ceil(50 / seg);
     reserve(startA, startB);
     reserve(startA - S, startB - S);
-    for (const f of [0.2, 0.48, 0.77]) reserve(Math.round(f * S) - 12, Math.round(f * S) + 12);
+    // Item box rows: roughly one every 200 m (4–7 per lap), spread around the lap with a little
+    // jitter and a random formation each. Reserved so jumps and tunnels keep clear of them.
+    const rowCount = Math.max(4, Math.min(7, Math.round(this.length / 200)));
+    const skip = Math.ceil(80 / seg), tail = Math.ceil(40 / seg);
+    const usable = S - skip - tail;
+    const formations = ['line4', 'line5', 'line3', 'stagger', 'pairs'];
+    this.boxRows = [];
+    for (let k = 0; k < rowCount; k++) {
+      const i = skip + Math.round(usable * (k + 0.5) / rowCount + (rand() - 0.5) * usable * 0.08);
+      const formation = formations[Math.floor(rand() * formations.length)];
+      this.boxRows.push({ i, formation });
+      reserve(i - 12, i + 16);
+    }
 
     // Overpasses at the crossings found during validation.
     for (const c of this.crossings) {
@@ -1301,15 +1313,29 @@ export class Track {
     return out;
   }
 
+  /** Item box positions for every planned row, laid out in the row's formation. */
   _itemBoxSpots() {
     const spots = [];
     const tmp = { x: 0, z: 0 };
-    for (const frac of [0.2, 0.48, 0.77]) {
-      const i = Math.round(frac * S);
-      const w = this.width[i];
-      for (const f of [-0.66, -0.22, 0.22, 0.66]) {
-        this.pointAt(i, f * w, 0, tmp);
-        spots.push({ x: tmp.x, z: tmp.z, y: this.roadY(i, f * w) });
+    const add = (i, f) => {
+      const w = this.width[circ(i)];
+      this.pointAt(i, f * w, 0, tmp);
+      spots.push({ x: tmp.x, z: tmp.z, y: this.roadY(i, f * w) });
+    };
+    const gap = Math.max(3, Math.round(6 / this.segmentLength)); // second line of a stagger
+    for (const row of this.boxRows) {
+      switch (row.formation) {
+        case 'line5': for (const f of [-0.72, -0.36, 0, 0.36, 0.72]) add(row.i, f); break;
+        case 'line3': for (const f of [-0.55, 0, 0.55]) add(row.i, f); break;
+        case 'stagger':
+          for (const f of [-0.6, 0, 0.6]) add(row.i, f);
+          for (const f of [-0.3, 0.3]) add(row.i + gap, f);
+          break;
+        case 'pairs':
+          for (const f of [-0.7, -0.45]) add(row.i, f);
+          for (const f of [0.45, 0.7]) add(row.i + gap, f);
+          break;
+        default: for (const f of [-0.66, -0.22, 0.22, 0.66]) add(row.i, f);
       }
     }
     return spots;
@@ -1321,7 +1347,7 @@ export class Track {
     const spots = [];
     const tmp = { x: 0, z: 0 };
     const TOTAL = 30;
-    const boxRows = [0.2, 0.48, 0.77].map((f) => Math.round(f * S));
+    const boxRows = this.boxRows.map((r) => r.i);
     while (spots.length < TOTAL) {
       const i = 30 + Math.floor(rand() * (S - 50));
       if (boxRows.some((r) => Math.abs(r - i) < 8)) continue;

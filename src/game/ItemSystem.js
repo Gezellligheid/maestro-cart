@@ -4,6 +4,7 @@ import { ITEM, ITEMS, KART } from './constants.js';
 
 const SHELL_CAP = 24;
 const RED_CAP = 16;
+const BOX_CAP = 48; // max item boxes per track (rows × formation)
 const OIL_CAP = 12;
 const PAD_CAP = 8;
 const CLOUD_CAP = 8;
@@ -81,7 +82,9 @@ export class ItemSystem {
     this.nextId = 1;
     this.time = 0;
 
-    this.boxes = track.itemBoxSpots.map((s) => ({ x: s.x, y: s.y, z: s.z, active: true, timer: 0, scale: 1 }));
+    // Fixed pool; each track uses as many as it has spots for (`used`).
+    this.boxes = Array.from({ length: BOX_CAP }, () => ({ x: 0, y: 0, z: 0, active: false, used: false, timer: 0, scale: 1 }));
+    this._placeBoxes(track.itemBoxSpots);
     this.coins = track.coinSpots.map((s) => ({ x: s.x, y: s.y, z: s.z, active: true, timer: 0 }));
     this.shells = new ProjectilePool(ITEM.SHELL, SHELL_CAP);
     this.reds = new ProjectilePool(ITEM.RED_SHELL, RED_CAP);
@@ -197,12 +200,23 @@ export class ItemSystem {
 
   /** Re-read box/coin positions after the track was regenerated (counts never change). */
   syncWithTrack() {
-    this.track.itemBoxSpots.forEach((s, i) => Object.assign(this.boxes[i], { x: s.x, y: s.y, z: s.z }));
+    this._placeBoxes(this.track.itemBoxSpots);
     this.track.coinSpots.forEach((s, i) => Object.assign(this.coins[i], { x: s.x, y: s.y, z: s.z }));
   }
 
+  _placeBoxes(spots) {
+    this.boxes.forEach((b, i) => {
+      const s = spots[i];
+      b.used = !!s;
+      b.active = b.used;
+      b.timer = 0;
+      b.scale = 1;
+      if (s) { b.x = s.x; b.y = s.y; b.z = s.z; }
+    });
+  }
+
   reset() {
-    for (const b of this.boxes) { b.active = true; b.timer = 0; b.scale = 1; }
+    for (const b of this.boxes) { b.active = b.used; b.timer = 0; b.scale = 1; }
     for (const c of this.coins) { c.active = true; c.timer = 0; }
     this.shells.releaseAll();
     this.reds.releaseAll();
@@ -492,6 +506,7 @@ export class ItemSystem {
     this.time += dt;
 
     for (const b of this.boxes) {
+      if (!b.used) continue;
       if (!b.active) {
         b.timer -= dt;
         if (b.timer <= 0) b.active = true;
@@ -765,7 +780,7 @@ export class ItemSystem {
 
     for (let i = 0; i < this.boxes.length; i++) {
       const b = this.boxes[i];
-      const sc = b.active ? b.scale : 0;
+      const sc = b.used && b.active ? b.scale : 0;
       e.set(time * 0.9 + i, time * 1.3 + i * 0.7, 0.4);
       q.setFromEuler(e);
       m.compose(p.set(b.x, b.y + 1.3 + Math.sin(time * 2 + i) * 0.18, b.z), q, s.set(sc, sc, sc));
