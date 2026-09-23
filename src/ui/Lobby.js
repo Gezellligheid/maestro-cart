@@ -167,7 +167,7 @@ export class Results {
   }
 
   /** entries: [{ slot, name, time|null }] in finishing order; localSlot highlights the player. */
-  render(entries, localSlot, { canRestart, note, ready = null }) {
+  render(entries, localSlot, { canRestart, note, ready = null, againLabel = null }) {
     this.list.innerHTML = entries.map((e, i) => {
       const me = e.slot === localSlot;
       return `<li class="flex items-center gap-3 rounded-xl px-3 py-2 ${me ? 'bg-amber-300/20 ring-2 ring-amber-300/60' : 'bg-black/25'}">
@@ -195,7 +195,7 @@ export class Results {
       force.classList.toggle('hidden', !ready.isHost || !ready.canReady);
     } else {
       this.again.disabled = false;
-      label.textContent = 'Next Race · New Track';
+      label.textContent = againLabel || 'Next Race · New Track';
       this.again.classList.add('btn-primary');
       this.again.classList.remove('btn-secondary');
       this.again.classList.toggle('hidden', !canRestart);

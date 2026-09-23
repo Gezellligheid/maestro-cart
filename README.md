@@ -36,7 +36,10 @@ public broker handles signalling only; gameplay traffic is direct WebRTC.
 - **Spectate**: after you finish, "Watch the race" (or Tab) follows the racers still on track;
   ← → switch between them.
 - **Stats & records** (menu → Your Stats): races, wins, podiums, coins, and best lap / race time
-  per track, kept in this browser. Every track has a code (shown on the results screen).
+  per track, kept in this browser. Every track has a code (results screen → Copy code); type it in
+  the menu's track-code box to race that exact track again (solo or time trial).
+- **Time Trial**: just you and three mushrooms, no item boxes. Your best run on a track is saved
+  as a see-through ghost to race against next time, with lap splits vs the ghost.
 - **Phones & tablets**: on-screen controls. The kart accelerates by itself; slide on the left pad
   to steer, with Drift, Item, Brake and Respawn buttons on the right.
 - **Garage** (in the room lobby and between rounds): coins you're holding when a round ends (plus a

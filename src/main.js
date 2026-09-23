@@ -1,6 +1,6 @@
 import './style.css';
 import * as THREE from 'three';
-import { createIcons, Flag, Users, Gamepad2, LogIn, Trophy, RotateCcw, Link, LoaderCircle, House, Wrench, Check, Medal, Eye, ChevronLeft, ChevronRight, Settings as SettingsIcon } from 'lucide';
+import { createIcons, Flag, Users, Gamepad2, LogIn, Trophy, RotateCcw, Link, LoaderCircle, House, Wrench, Check, Medal, Eye, ChevronLeft, ChevronRight, Timer, Settings as SettingsIcon } from 'lucide';
 
 import { Renderer } from './engine/Renderer.js';
 import { Physics } from './engine/Physics.js';
@@ -25,12 +25,13 @@ import { PodiumCeremony } from './game/Podium.js';
 import { FinishFlag } from './ui/FinishFlag.js';
 import { Movers } from './game/Movers.js';
 import { Weather } from './engine/Weather.js';
-import { Records, seedToCode } from './game/Records.js';
+import { Records, seedToCode, codeToSeed } from './game/Records.js';
+import { GhostRecorder, GhostKart, saveGhost, loadGhost } from './game/Ghost.js';
 import { Emotes } from './ui/Emotes.js';
 import { TouchControls } from './ui/Touch.js';
 import { StatsPanel } from './ui/StatsPanel.js';
 import {
-  MAX_KARTS, TOTAL_LAPS, SOLO_BOTS, NET_TICK_HZ, KART, CPU_NAMES,
+  MAX_KARTS, TOTAL_LAPS, SOLO_BOTS, NET_TICK_HZ, KART, CPU_NAMES, ITEM,
 } from './game/constants.js';
 
 const COUNTDOWN_MS = 3600;
@@ -61,6 +62,15 @@ class Game {
     this.touch = new TouchControls(this.input);
     this.spectating = false;
     this.spectateSlot = -1;
+    this.ghostKart = new GhostKart(this.renderer);
+    this.ghostRec = new GhostRecorder();
+    this.ghost = null;
+    document.getElementById('btn-trial').addEventListener('click', () => this.startTrial(this.lobby.name));
+    document.getElementById('btn-copy-code').addEventListener('click', () => {
+      const code = seedToCode(this.track.seed);
+      navigator.clipboard?.writeText(code).catch(() => {});
+      this.toast(`Track code ${code} copied: paste it in the menu to race this track again`);
+    });
     window.addEventListener('keydown', (e) => {
       if (e.target.tagName === 'INPUT') return;
       if (e.code === 'KeyM') {
@@ -188,6 +198,15 @@ class Game {
       if (k !== this.localKart) return;
       if (k.lap === TOTAL_LAPS - 1) this.hud.flash('Final Lap!', 1.6, '#ffd23f');
       const rec = this.records.submitLap(this.track.seed, this.track.name, lapTime);
+      if (this.mode === 'trial') {
+        const n = this.ghostRec.laps.push(lapTime);
+        const g = this.ghost?.laps[n - 1];
+        if (g) {
+          const diff = (lapTime - g) / 1000;
+          this.hud.subtitle(`Lap ${formatTime(lapTime)} · ${diff <= 0 ? '−' : '+'}${Math.abs(diff).toFixed(2)}s vs ghost`, 2.6);
+          return;
+        }
+      }
       if (rec === 'record') {
         this.hud.subtitle(`Lap ${formatTime(lapTime)} · New lap record!`, 2.6);
         this.audio.blip('trick');
@@ -291,6 +310,7 @@ class Game {
       return;
     }
     if (this.mode === 'solo') this.startSolo(this.lobby.name);
+    else if (this.mode === 'trial') this.startTrial(this.lobby.name, this.track.seed);
     else if (this.mode === 'host') this.startHostRace();
   }
 
@@ -317,7 +337,30 @@ class Game {
     this.mode = 'solo';
     const roster = [{ slot: 0, name, control: 'local', look: this.garage.look }];
     for (let i = 1; i <= SOLO_BOTS; i++) roster.push({ slot: i, name: CPU_NAMES[i - 1], control: 'bot', look: randomLook() });
-    this._setupRace(roster, COUNTDOWN_MS, this._nextSeed());
+    this._setupRace(roster, COUNTDOWN_MS, this._codeSeed() ?? this._nextSeed());
+  }
+
+  /** Time trial: just you, three mushrooms, no item boxes, and your best run as a ghost. */
+  startTrial(name, seed = null) {
+    this.mode = 'trial';
+    const s = seed ?? this._codeSeed() ?? this._nextSeed();
+    this._setupRace([{ slot: 0, name, control: 'local', look: this.garage.look }], COUNTDOWN_MS, s);
+    this.items.clearBoxes();
+    this.localKart.setItem(ITEM.TRIPLE);
+    this.ghost = loadGhost(s);
+    this.ghostKart.show(!!this.ghost);
+    if (this.ghost) this.ghostKart.update(0, this.ghost);
+    this.ghostRec.reset();
+    this._ghostSaved = false;
+    this.hud.subtitle(`Time Trial · ${this.track.name}${this.ghost ? ' · Ghost ' + formatTime(this.ghost.time) : ''}`, 3.2);
+  }
+
+  /** Seed from the menu's track-code box (used once, then cleared). */
+  _codeSeed() {
+    const input = document.getElementById('track-code');
+    const seed = codeToSeed(input.value);
+    input.value = '';
+    return seed;
   }
 
   startHostRace() {
@@ -354,6 +397,8 @@ class Game {
 
   _clearRace() {
     this._stopSpectate(false);
+    this.ghost = null;
+    this.ghostKart.show(false);
     this.emotes.clear();
     this.touch.show(false);
     for (const k of this.karts) k.destroy();
@@ -583,6 +628,9 @@ class Game {
       const place = this.race.finishOrder.findIndex((f) => f.slot === k.slot) + 1 || k.rank;
       const best = this.records.submitRace(this.track.seed, this.track.name, k.finishTime, place);
       if (best === 'record') setTimeout(() => this.hud.subtitle('New best time on this track!', 2.5), 3000);
+      if (this.mode === 'trial' && (!this.ghost || k.finishTime < this.ghost.time)) {
+        this._ghostSaved = saveGhost(this.track.seed, k.finishTime, this.ghostRec.laps, this.ghostRec.frames);
+      }
       this.audio.stopMusic(0.5);
       this.audio.play('raceEnd');
       const jingle = this.audio.duration('raceEnd') || 2.7;
@@ -639,6 +687,10 @@ class Game {
 
   _beginPodium() {
     if (this.podium.active || !this.inRace) return;
+    if (this.mode === 'trial') {
+      this._podiumDone();
+      return;
+    }
     const order = this.race.finishOrder.map((f) => f.slot);
     for (const k of this.race.standings) if (!order.includes(k.slot)) order.push(k.slot);
     const entries = order.slice(0, 3).map((slot, i) => {
@@ -668,7 +720,7 @@ class Game {
   /** Once per round: coins held at the end plus a placement bonus go into the garage wallet. */
   _bankCoins() {
     const k = this.localKart;
-    if (this.banked || !k) return;
+    if (this.banked || !k || this.mode === 'trial') return; // time trials are just for the clock
     this.banked = true;
     const finishIdx = this.race.finishOrder.findIndex((f) => f.slot === k.slot);
     const place = finishIdx >= 0 ? finishIdx + 1 : this.race.standings.length;
@@ -689,6 +741,12 @@ class Game {
       if (!seen.has(k.slot)) entries.push({ slot: k.slot, name: k.name, time: null, dnf: done, color: k.color });
     }
     let note = '';
+    let againLabel = null;
+    if (this.mode === 'trial') {
+      const rec = this.records.track(this.track.seed);
+      againLabel = 'Retry · Race your ghost';
+      note = rec && rec.race != null ? `Best time ${formatTime(rec.race)}${this._ghostSaved ? ' · New ghost saved!' : ''}` : '';
+    }
     if (this.mode === 'client') note = done ? 'Upgrade your kart while the host starts the next race…' : 'Waiting for other racers to finish…';
     else if (!done) note = 'Other racers are still on track…';
     let ready = null;
@@ -706,9 +764,10 @@ class Game {
     }
     document.getElementById('btn-spectate').classList.toggle('hidden', !this._canSpectate());
     this.results.render(entries, this.localKart ? this.localKart.slot : -1, {
-      canRestart: this.mode === 'solo' || this.mode === 'host',
+      canRestart: this.mode === 'solo' || this.mode === 'host' || this.mode === 'trial',
       note,
       ready,
+      againLabel,
     });
   }
 
@@ -977,6 +1036,11 @@ class Game {
       this._specSnap = false;
       if (this.spectating) this._updateSpectateUI();
       if (this.input.touch) this.input.touch.gas = this.race.state === 'racing';
+      if (this.mode === 'trial') {
+        const t = this.race.elapsed(this.now) / 1000;
+        if (this.race.state === 'racing' && !lk.finished) this.ghostRec.sample(t, lk);
+        if (this.ghost) this.ghostKart.update(t, this.ghost);
+      }
       this.hud.update(dt, {
         kart: lk,
         standings: this.race.standings,
@@ -1167,7 +1231,7 @@ class Game {
 }
 
 async function boot() {
-  createIcons({ icons: { Flag, Users, Gamepad2, LogIn, Trophy, RotateCcw, Link, LoaderCircle, House, Wrench, Check, Medal, Eye, ChevronLeft, ChevronRight, Settings: SettingsIcon } });
+  createIcons({ icons: { Flag, Users, Gamepad2, LogIn, Trophy, RotateCcw, Link, LoaderCircle, House, Wrench, Check, Medal, Eye, ChevronLeft, ChevronRight, Timer, Settings: SettingsIcon } });
   const loading = document.getElementById('loading');
   try {
     const physics = await Physics.create();

@@ -204,6 +204,11 @@ export class ItemSystem {
     this.track.coinSpots.forEach((s, i) => Object.assign(this.coins[i], { x: s.x, y: s.y, z: s.z }));
   }
 
+  /** Time trial: no item boxes on track. */
+  clearBoxes() {
+    this._placeBoxes([]);
+  }
+
   _placeBoxes(spots) {
     this.boxes.forEach((b, i) => {
       const s = spots[i];
