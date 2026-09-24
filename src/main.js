@@ -39,7 +39,7 @@ import {
 
 const COUNTDOWN_MS = 3600;
 const RACE_TIMEOUT_AFTER_FIRST_MS = 30000; // stragglers get a DNF this long after the first human finishes
-const ITEM_EVENTS = new Set(['box', 'coin', 'spawn', 'hit', 'despawn', 'zap', 'pad', 'slip', 'cloud', 'steal']);
+const ITEM_EVENTS = new Set(['box', 'coin', 'spawn', 'hit', 'despawn', 'zap', 'pad', 'slip', 'cloud', 'steal', 'blast', 'horn']);
 const randomSeed = () => (Math.random() * 0xffffffff) >>> 0;
 const SHOWROOM = { x: 0, y: 400, z: 0 }; // garage podium floats high above the map
 
@@ -202,6 +202,18 @@ class Game {
     };
     items.onEvent = (msg) => { if (this.mode === 'host') this.net.broadcast(msg); };
     items.onRequest = (msg) => this.net.send(msg);
+    items.onBlast = (x, z) => {
+      this.audio.blip('hit');
+      const lk = this.localKart;
+      if (lk) {
+        const d = Math.hypot(lk.x - x, lk.z - z);
+        if (d < 40) this.renderer.addShake(Math.max(0.2, 1 - d / 40));
+      }
+    };
+    items.onHorn = (slot) => {
+      this.audio.blip('horn');
+      if (this.localKart && this.localKart.slot === slot) this.renderer.addShake(0.4);
+    };
     items.onLocalHit = (k) => {
       if (k === this.localKart) {
         this.audio.blip('hit');
@@ -1090,8 +1102,9 @@ class Game {
       k.netZ = rec.z;
       k.applyRemoteFlags(rec.flags, rec.driftTier & 15, rec.steer);
       k.applyRemoteExtras(rec.driftTier >> 4);
-      k.item = rec.item & 15;
-      k.applyRemoteItemBits(rec.item >> 4);
+      k.item = rec.item;
+      k.applyRemoteItemBits(rec.itemBits);
+      k.applyRemoteExtras2(rec.extra2);
       k.rollTimer = rec.flags & FLAG.ROLLING ? 0.1 : 0;
       k.progress = rec.progress;
       k.lap = rec.lap;
@@ -1362,6 +1375,21 @@ class Game {
     const magnet = k.magnetTimer > 0;
     if (magnet && !s.magnet) this.audio.blip('magnet');
     s.magnet = magnet;
+    const star = k.starTimer > 0;
+    if (star && !s.star) {
+      this.audio.blip('mega');
+      this.hud.flash('SUPER STAR!', 1.2, '#ffe156');
+      this.input.rumble(0.5, 0.8, 400);
+    }
+    s.star = star;
+    const rocket = k.rocketTimer > 0;
+    if (rocket && !s.rocket) {
+      this.audio.blip('boost');
+      this.hud.flash('BULLET!', 1.2, '#ffffff');
+      this.renderer.addShake(0.5);
+      this.input.rumble(0.8, 0.8, 500);
+    }
+    s.rocket = rocket;
     const mega = k.megaTimer > 0;
     if (mega && !s.mega) {
       this.audio.blip('mega');

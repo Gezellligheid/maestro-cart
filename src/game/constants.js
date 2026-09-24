@@ -12,14 +12,16 @@ export const SOLO_BOTS = 5;
 export const NET_TICK_HZ = 30;
 export const INTERP_DELAY_MS = 100;
 export const MAX_EXTRAPOLATE_MS = 250;
-export const ROOM_PREFIX = 'mkbros-v1-';
+export const ROOM_PREFIX = 'mkbros-v2-'; // bump when the network format changes
 
 export const ITEM = Object.freeze({
   NONE: 0, SHELL: 1, BANANA: 2, MUSHROOM: 3, MEGA: 4, RED_SHELL: 5, LIGHTNING: 6, SHIELD: 7, MAGNET: 8,
-  TRIPLE: 9, OIL: 10, GHOST: 11, ROCKET: 12, PAD: 13, CLOUD: 14, // item ids must stay ≤ 15 (packed in 4 bits)
+  TRIPLE: 9, OIL: 10, GHOST: 11, ROCKET: 12, PAD: 13, CLOUD: 14,
+  BLUE: 15, BOMB: 16, GOLDEN: 17, STAR: 18, FIRE: 19, HORN: 20, FAKE: 21,
 });
 export const ITEM_NAMES = ['', 'Green Shell', 'Banana', 'Mushroom', 'Mega Mushroom', 'Red Shell', 'Lightning Bolt', 'Bubble Shield', 'Coin Magnet',
-  'Triple Mushroom', 'Oil Slick', 'Ghost', 'Rocket', 'Boost Pad', 'Storm Cloud'];
+  'Triple Mushroom', 'Oil Slick', 'Ghost', 'Bullet Rocket', 'Boost Pad', 'Storm Cloud',
+  'Spiny Shell', 'Bomb', 'Golden Mushroom', 'Super Star', 'Fire Flower', 'Super Horn', 'Fake Item Box'];
 
 export const COLLISION = Object.freeze({ WALL: 0x0001, GROUND: 0x0002, KART: 0x0004 });
 
@@ -108,8 +110,24 @@ export const ITEMS = Object.freeze({
   oilLife: 14,
   slipDuration: 1.3,
   ghostDuration: 6,
-  rocketDuration: 3.5,
-  rocketSpeed: 1.6, // top-speed multiplier while riding the rocket
+  rocketDuration: 6, // Bullet Rocket: you become a bullet that drives itself
+  rocketSpeed: 1.7, // top-speed multiplier while riding the rocket
   cloudDuration: 4.5,
   padLife: 25,
+  blueSpeed: 60, // Spiny Shell flies over the track to the leader
+  blueLife: 25,
+  blueBlast: 7,
+  bombSpeed: 30,
+  bombFuse: 2.8,
+  bombRadius: 0.8,
+  bombBlast: 6.5,
+  goldenDuration: 7.5, // spam boosts for this long
+  starDuration: 8,
+  starSpeed: 1.25,
+  fireSpeed: 44,
+  fireLife: 2.4,
+  fireUses: 5,
+  fireRadius: 0.55,
+  hornRadius: 10,
+  fakeRadius: 1.0,
 });

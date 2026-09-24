@@ -59,6 +59,8 @@ export class Kart {
     this.confusedTimer = 0; // storm cloud: steering reversed
     this.ghostTimer = 0; // intangible, can't be hit
     this.rocketTimer = 0; // autopilot rocket
+    this.starTimer = 0; // Super Star: invincible, faster, spins anyone you touch
+    this.goldenTimer = 0; // Golden Mushroom: unlimited boosts while it lasts
     this.stallTimer = 0; // botched start: engine stalls
     this.canTrick = false; // launched off a ramp/crest: a hop press in the air does a trick
     this.trickTimer = 0;
@@ -164,6 +166,11 @@ export class Kart {
     if (this.confusedTimer > 0) this.confusedTimer -= dt;
     if (this.ghostTimer > 0) this.ghostTimer -= dt;
     if (this.rocketTimer > 0) this.rocketTimer -= dt;
+    if (this.starTimer > 0) this.starTimer -= dt;
+    if (this.goldenTimer > 0) {
+      this.goldenTimer -= dt;
+      if (this.goldenTimer <= 0 && this.item === ITEM.GOLDEN) this.item = ITEM.NONE;
+    }
     this._updateScale(dt);
 
     // Ground contact: within reach of the surface (slopes/banks included) and not mid-hop.
@@ -199,7 +206,7 @@ export class Kart {
     const beyond = Math.abs(this.trackLateral) > this.track.roadLimitAt(this.trackIdx);
     // Shortcut dirt paths: only a little slower than tarmac (grass is much worse).
     this.onDirt = beyond && this.track.shortcutAt(this.x, this.z);
-    this.offroad = (beyond && !this.onDirt) || hazard === 'sand';
+    this.offroad = ((beyond && !this.onDirt) || hazard === 'sand') && !(this.starTimer > 0);
     this.onIce = hazard === 'ice';
     this.inWater = hazard === 'water';
     if (this.padCooldown > 0) this.padCooldown -= dt;
@@ -226,6 +233,7 @@ export class Kart {
     if (this.megaTimer > 0) maxSpeed *= 1.12;
     else if (this.shrinkTimer > 0) maxSpeed *= ITEMS.shrinkSpeed;
     if (this.inWater && !boosting) maxSpeed *= 0.78; // wading through a water crossing
+    if (this.starTimer > 0) maxSpeed = Math.max(maxSpeed, topSpeed * ITEMS.starSpeed);
     if (this.rocketTimer > 0) maxSpeed = C.maxSpeed * this.speedScale * ITEMS.rocketSpeed;
 
     let throttle = this.controlsEnabled ? input.throttle : 0;
@@ -381,7 +389,7 @@ export class Kart {
       this.rollTimer -= dt;
       if (this.rollTimer <= 0) {
         this.item = this.pendingItem;
-        this.itemUses = this.item === ITEM.TRIPLE ? 3 : 1;
+        this.itemUses = this.item === ITEM.TRIPLE ? 3 : this.item === ITEM.FIRE ? ITEMS.fireUses : 1;
         this.pendingItem = ITEM.NONE;
       }
     }
@@ -421,7 +429,7 @@ export class Kart {
   }
 
   spinOut() {
-    if (this.spinTimer > 0 || this.megaTimer > 0 || this.ghostTimer > 0 || this.rocketTimer > 0) return false;
+    if (this.spinTimer > 0 || this.megaTimer > 0 || this.ghostTimer > 0 || this.rocketTimer > 0 || this.starTimer > 0) return false;
     if (this.shieldTimer > 0) {
       // The bubble absorbs the hit.
       this.shieldTimer = 0;
@@ -453,7 +461,7 @@ export class Kart {
   /** Lightning strike from another kart. Returns true if it took effect. */
   /** Oil slick: brief loss of grip. */
   slip() {
-    if (this.ghostTimer > 0 || this.rocketTimer > 0 || this.megaTimer > 0 || this.slipTimer > 0) return false;
+    if (this.ghostTimer > 0 || this.rocketTimer > 0 || this.megaTimer > 0 || this.slipTimer > 0 || this.starTimer > 0) return false;
     if (this.drifting) this._cancelDrift();
     this.slipTimer = ITEMS.slipDuration;
     return true;
@@ -461,7 +469,7 @@ export class Kart {
 
   /** Storm cloud: reversed steering. */
   confuse() {
-    if (this.ghostTimer > 0 || this.rocketTimer > 0) return false;
+    if (this.ghostTimer > 0 || this.rocketTimer > 0 || this.starTimer > 0) return false;
     if (this.shieldTimer > 0) { this.shieldTimer = 0; this.shieldPopped = true; return false; }
     this.confusedTimer = ITEMS.cloudDuration;
     return true;
@@ -493,7 +501,7 @@ export class Kart {
   /** Put an item straight into the slot (e.g. stolen with Ghost). */
   setItem(item) {
     this.item = item;
-    this.itemUses = item === ITEM.TRIPLE ? 3 : 1;
+    this.itemUses = item === ITEM.TRIPLE ? 3 : item === ITEM.FIRE ? ITEMS.fireUses : 1;
     this.rollTimer = 0;
     this.pendingItem = ITEM.NONE;
   }
@@ -511,7 +519,7 @@ export class Kart {
   }
 
   zap() {
-    if (this.megaTimer > 0 || this.ghostTimer > 0 || this.rocketTimer > 0) return false;
+    if (this.megaTimer > 0 || this.ghostTimer > 0 || this.rocketTimer > 0 || this.starTimer > 0) return false;
     if (this.shieldTimer > 0) {
       this.shieldTimer = 0;
       this.shieldPopped = true;
@@ -524,6 +532,31 @@ export class Kart {
     this.boostTimer = 0;
     this._cancelDrift();
     return true;
+  }
+
+  activateStar() {
+    this.starTimer = ITEMS.starDuration;
+    this.spinTimer = 0;
+    this.slipTimer = 0;
+    this.shrinkTimer = 0;
+    this.confusedTimer = 0;
+    this.boostTimer = Math.max(this.boostTimer, 0.5);
+  }
+
+  /** Golden Mushroom: the first use starts the clock; every press boosts until it runs out. */
+  activateGolden() {
+    if (this.goldenTimer <= 0) this.goldenTimer = ITEMS.goldenDuration;
+    this.applyMushroom();
+  }
+
+  /** Second status byte: 1 = star, 2 = golden mushroom. */
+  get extra2Bits() {
+    return (this.starTimer > 0 ? 1 : 0) | (this.goldenTimer > 0 ? 2 : 0);
+  }
+
+  applyRemoteExtras2(bits) {
+    this.starTimer = bits & 1 ? 1 : 0;
+    this.goldenTimer = bits & 2 ? 1 : 0;
   }
 
   activateShield() {
@@ -550,7 +583,7 @@ export class Kart {
 
   /** Smoothly grow/shrink (Mega / Lightning) and resize the physics ball to match. */
   _updateScale(dt) {
-    const target = this.megaTimer > 0 ? MEGA.scale : this.rocketTimer > 0 ? 1.25 : this.shrinkTimer > 0 ? ITEMS.shrinkScale : 1;
+    const target = this.megaTimer > 0 ? MEGA.scale : this.rocketTimer > 0 ? 1.45 : this.shrinkTimer > 0 ? ITEMS.shrinkScale : 1;
     this.megaScale += (target - this.megaScale) * Math.min(1, dt * 3);
     if (Math.abs(target - this.megaScale) < 0.01) this.megaScale = target;
     // Mega, Ghost and Rocket karts don't physically collide with other karts.

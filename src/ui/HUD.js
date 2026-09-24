@@ -17,7 +17,14 @@ ICONS[ITEM.GHOST] = `<svg viewBox="0 0 64 64"><path d="M12 56V28a20 20 0 0 1 40 
 ICONS[ITEM.ROCKET] = `<svg viewBox="0 0 64 64"><path d="M8 40l10-4v-8l-10-4z" fill="#ffb703"/><path d="M18 22h26c8 0 14 5 14 10s-6 10-14 10H18z" fill="#2b2d42" stroke="#111" stroke-width="3"/><circle cx="46" cy="30" r="3.5" fill="#fff"/><circle cx="47" cy="30" r="1.8" fill="#111"/><path d="M22 22l-4-10h10l6 10zM22 42l-4 10h10l6-10z" fill="#e63946" stroke="#111" stroke-width="2"/></svg>`;
 ICONS[ITEM.PAD] = `<svg viewBox="0 0 64 64"><rect x="10" y="8" width="44" height="48" rx="6" fill="#ff7f11" stroke="#9a3f00" stroke-width="3"/><path d="M18 42l14-10 14 10M18 30l14-10 14 10" fill="none" stroke="#ffe156" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 ICONS[ITEM.CLOUD] = `<svg viewBox="0 0 64 64"><path d="M16 38a10 10 0 0 1 2-20 14 14 0 0 1 26-2 10 10 0 0 1 6 19z" fill="#5b6275" stroke="#2b2f3a" stroke-width="3"/><path d="M34 34l-6 12h7l-4 12 12-16h-7l4-8z" fill="#ffd23f" stroke="#8a6d00" stroke-width="2" stroke-linejoin="round"/></svg>`;
-const ROLL_ORDER = [ITEM.SHELL, ITEM.BANANA, ITEM.MUSHROOM, ITEM.RED_SHELL, ITEM.SHIELD, ITEM.OIL, ITEM.MAGNET, ITEM.TRIPLE, ITEM.PAD, ITEM.GHOST, ITEM.CLOUD, ITEM.LIGHTNING, ITEM.ROCKET, ITEM.MEGA];
+ICONS[ITEM.BLUE] = `<svg viewBox="0 0 64 64"><path d="M6 30c-4-6-2-12 4-12l10 8zM58 30c4-6 2-12-4-12l-10 8z" fill="#fff" stroke="#1d4ed8" stroke-width="2.5"/><ellipse cx="32" cy="46" rx="24" ry="8" fill="#fff" stroke="#1e3a8a" stroke-width="3"/><path d="M10 44c0-15 10-26 22-26s22 11 22 26z" fill="#2563eb" stroke="#1e3a8a" stroke-width="3"/><path d="M32 8l5 12h-10zM18 16l8 8-9 3zM46 16l-8 8 9 3zM32 26l4 9h-8z" fill="#fff" stroke="#1e3a8a" stroke-width="2" stroke-linejoin="round"/></svg>`;
+ICONS[ITEM.BOMB] = `<svg viewBox="0 0 64 64"><circle cx="30" cy="38" r="20" fill="#1f2230" stroke="#000" stroke-width="3"/><circle cx="23" cy="31" r="5" fill="#fff" opacity="0.35"/><rect x="36" y="12" width="10" height="9" rx="2" transform="rotate(35 41 16)" fill="#9aa1b2" stroke="#000" stroke-width="2"/><path d="M45 12c3-5 8-6 10-3" fill="none" stroke="#8a6d3b" stroke-width="3"/><circle cx="56" cy="8" r="5" fill="#ffd23f"/><circle cx="56" cy="8" r="2.5" fill="#ff5a1f"/></svg>`;
+ICONS[ITEM.GOLDEN] = ICONS[ITEM.MUSHROOM].replace('#e63946', '#ffcf33').replace('#7a1017', '#9a6b00').replaceAll('fill="#fff"', 'fill="#fff4c2"');
+ICONS[ITEM.STAR] = `<svg viewBox="0 0 64 64"><path d="M32 4l8 18 20 2-15 13 5 20-18-11-18 11 5-20L4 24l20-2z" fill="#ffe156" stroke="#b7791f" stroke-width="3" stroke-linejoin="round"/><ellipse cx="27" cy="30" rx="2.5" ry="4.5" fill="#1b1400"/><ellipse cx="37" cy="30" rx="2.5" ry="4.5" fill="#1b1400"/></svg>`;
+ICONS[ITEM.FIRE] = `<svg viewBox="0 0 64 64"><path d="M32 36v22" stroke="#2f9e44" stroke-width="5"/><path d="M32 50c-8-6-16-4-18 0 6 2 12 2 18 0zM32 50c8-6 16-4 18 0-6 2-12 2-18 0z" fill="#40c057" stroke="#2b8a3e" stroke-width="2"/><circle cx="32" cy="24" r="18" fill="#ff6b1a" stroke="#c2410c" stroke-width="3"/><circle cx="32" cy="24" r="11" fill="#ffd23f"/><circle cx="32" cy="24" r="5" fill="#fff7d6"/><ellipse cx="28" cy="22" rx="1.8" ry="3.4" fill="#1b1400"/><ellipse cx="36" cy="22" rx="1.8" ry="3.4" fill="#1b1400"/></svg>`;
+ICONS[ITEM.HORN] = `<svg viewBox="0 0 64 64"><path d="M8 26h10l26-16v44L18 38H8z" fill="#ffcf33" stroke="#9a6b00" stroke-width="3" stroke-linejoin="round"/><rect x="8" y="26" width="10" height="12" fill="#e0a800" stroke="#9a6b00" stroke-width="3"/><path d="M50 22c4 3 4 17 0 20M55 16c7 6 7 26 0 32" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"/></svg>`;
+ICONS[ITEM.FAKE] = `<svg viewBox="0 0 64 64"><rect x="8" y="8" width="48" height="48" rx="8" fill="#ff8fa3" fill-opacity="0.8" stroke="#fff" stroke-width="4"/><text x="32" y="44" text-anchor="middle" font-size="32" font-weight="900" fill="#fff" font-family="sans-serif" transform="rotate(180 32 32)">?</text></svg>`;
+const ROLL_ORDER = [ITEM.SHELL, ITEM.BANANA, ITEM.MUSHROOM, ITEM.RED_SHELL, ITEM.SHIELD, ITEM.FAKE, ITEM.OIL, ITEM.MAGNET, ITEM.TRIPLE, ITEM.BOMB, ITEM.PAD, ITEM.GHOST, ITEM.FIRE, ITEM.CLOUD, ITEM.HORN, ITEM.LIGHTNING, ITEM.GOLDEN, ITEM.ROCKET, ITEM.STAR, ITEM.BLUE, ITEM.MEGA];
 const $ = (id) => document.getElementById(id);
 
 /**
@@ -210,7 +217,9 @@ export class HUD {
       el.item.style.position = 'relative';
       el.item.appendChild(this._usesEl);
     }
-    const uses = kart.item === ITEM.TRIPLE && kart.rollTimer <= 0 ? `×${kart.itemUses}` : '';
+    const uses = kart.rollTimer > 0 ? ''
+      : kart.item === ITEM.TRIPLE || kart.item === ITEM.FIRE ? `×${kart.itemUses}`
+        : kart.item === ITEM.GOLDEN && kart.goldenTimer > 0 ? `${Math.ceil(kart.goldenTimer)}s` : '';
     this._set('uses', this._usesEl, uses);
     this._usesEl.style.display = uses ? '' : 'none';
 

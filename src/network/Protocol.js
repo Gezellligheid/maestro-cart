@@ -4,22 +4,23 @@ import { MAX_KARTS } from '../game/constants.js';
  * Binary kart-state packets for the unreliable channel.
  *
  * Header (4 bytes): u8 type, u8 count, u16 sequence
- * Record (44 bytes, little endian):
- *   0 u8 slot | 1 u8 flags | 2 u8 driftTier (low nibble) + shrink/shield/magnet bits | 3 u8 item
+ * Record (48 bytes, little endian):
+ *   0 u8 slot | 1 u8 flags | 2 u8 driftTier (low nibble) + shrink/shield/magnet bits | 3 u8 item bits
  *   4 u32 sender time (ms)
  *   8 f32 x | 12 f32 y | 16 f32 z | 20 f32 yaw
  *  24 f32 vx | 28 f32 vy | 32 f32 vz | 36 f32 progress
  *  40 u8 lap | 41 u8 coins | 42 i8 steer*100 | 43 u8 rank
+ *  44 u8 item id | 45 u8 status bits 2 (star, golden) | 46 u16 reserved
  */
 export const PKT_CLIENT_STATE = 1;
 export const PKT_SNAPSHOT = 2;
 export const HEADER_BYTES = 4;
-export const RECORD_BYTES = 44;
+export const RECORD_BYTES = 48;
 
 /** Plain decoded record; one instance per slot is reused forever. */
 export class KartRecord {
   constructor() {
-    this.slot = 0; this.flags = 0; this.driftTier = 0; this.item = 0;
+    this.slot = 0; this.flags = 0; this.driftTier = 0; this.item = 0; this.itemBits = 0; this.extra2 = 0;
     this.time = 0;
     this.x = 0; this.y = 0; this.z = 0; this.yaw = 0;
     this.vx = 0; this.vy = 0; this.vz = 0;
@@ -28,7 +29,7 @@ export class KartRecord {
   }
 
   copyFrom(r) {
-    this.slot = r.slot; this.flags = r.flags; this.driftTier = r.driftTier; this.item = r.item;
+    this.slot = r.slot; this.flags = r.flags; this.driftTier = r.driftTier; this.item = r.item; this.itemBits = r.itemBits; this.extra2 = r.extra2;
     this.time = r.time;
     this.x = r.x; this.y = r.y; this.z = r.z; this.yaw = r.yaw;
     this.vx = r.vx; this.vy = r.vy; this.vz = r.vz;
@@ -40,8 +41,9 @@ export class KartRecord {
   fromKart(k, time) {
     // Upper nibble of the drift-tier byte carries shrink / shield / magnet state.
     this.slot = k.slot; this.flags = k.flags; this.driftTier = k.driftTier | (k.extraBits << 4);
-    // Low nibble: held item; high nibble: rocket / slipping / confused flags.
-    this.item = (k.rollTimer > 0 ? 0 : k.item) | k.itemBits;
+    this.item = k.rollTimer > 0 ? 0 : k.item;
+    this.itemBits = k.itemBits >> 4; // rocket / slipping / confused / trick
+    this.extra2 = k.extra2Bits;
     this.time = time;
     this.x = k.x; this.y = k.y; this.z = k.z; this.yaw = k.yaw;
     this.vx = k.vx; this.vy = k.vy; this.vz = k.vz;
@@ -75,7 +77,7 @@ export class PacketWriter {
     v.setUint8(o, r.slot);
     v.setUint8(o + 1, r.flags);
     v.setUint8(o + 2, r.driftTier);
-    v.setUint8(o + 3, r.item);
+    v.setUint8(o + 3, r.itemBits);
     v.setUint32(o + 4, r.time >>> 0, true);
     v.setFloat32(o + 8, r.x, true);
     v.setFloat32(o + 12, r.y, true);
@@ -89,6 +91,8 @@ export class PacketWriter {
     v.setUint8(o + 41, r.coins);
     v.setInt8(o + 42, Math.round(Math.max(-1, Math.min(1, r.steer)) * 100));
     v.setUint8(o + 43, r.rank);
+    v.setUint8(o + 44, r.item);
+    v.setUint8(o + 45, r.extra2);
     this.count++;
   }
 
@@ -119,7 +123,7 @@ export function readPacket(buffer, onRecord) {
     r.slot = v.getUint8(o);
     r.flags = v.getUint8(o + 1);
     r.driftTier = v.getUint8(o + 2);
-    r.item = v.getUint8(o + 3);
+    r.itemBits = v.getUint8(o + 3);
     r.time = v.getUint32(o + 4, true);
     r.x = v.getFloat32(o + 8, true);
     r.y = v.getFloat32(o + 12, true);
@@ -133,6 +137,8 @@ export function readPacket(buffer, onRecord) {
     r.coins = v.getUint8(o + 41);
     r.steer = v.getInt8(o + 42) / 100;
     r.rank = v.getUint8(o + 43);
+    r.item = v.getUint8(o + 44);
+    r.extra2 = v.getUint8(o + 45);
     if (r.slot < MAX_KARTS && Number.isFinite(r.x) && Number.isFinite(r.z)) onRecord(r);
   }
   return type;

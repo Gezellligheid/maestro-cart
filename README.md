@@ -70,8 +70,12 @@ public broker handles signalling only; gameplay traffic is direct WebRTC.
   makes every kart driving through it fishtail), mushroom, triple mushroom (3 uses), boost pad drop
   (anyone can use it), bubble shield (absorbs the next hit), coin magnet, ghost (6 s intangible,
   steals a rival's item), storm cloud (reverses the leader's steering), lightning bolt (back half:
-  shrinks everyone else), rocket (last places: 3.5 s autopilot at 1.6× speed, bowls karts over) and
-  the rare Mega Mushroom (3× size for 10 s).
+  shrinks everyone else), Bullet Rocket (last places: you turn into a bullet that drives itself for
+  6 s at 1.7× speed and bowls karts over), the rare Mega Mushroom (3× size for 10 s), fake item box
+  (a trap), bomb (thrown, blows up on contact or after ~3 s), Fire Flower (5 bouncing fireballs),
+  Super Horn (shockwave that spins nearby karts and destroys nearby items, even a Spiny Shell),
+  Golden Mushroom (unlimited boosts for 7.5 s), Super Star (8 s invincible and faster, spins anyone
+  you touch) and the rare Spiny Shell (flies to the leader and explodes).
 - **Audio**: `sound_effects/` holds the countdown, item-roulette, race-end jingle, the menu loop
   (main menu and room lobby), an after-race loop (podium, results, garage between races) and three
   race music

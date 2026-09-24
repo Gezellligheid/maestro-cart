@@ -9,6 +9,17 @@ const OIL_CAP = 12;
 const PAD_CAP = 8;
 const CLOUD_CAP = 8;
 const BANANA_CAP = 32;
+const BLUE_CAP = 4;
+const BOMB_CAP = 8;
+const FIRE_CAP = 24;
+const FAKE_CAP = 12;
+// Projectiles fired forward from the kart's nose (the rest are dropped behind).
+const THROWN = new Set([ITEM.SHELL, ITEM.RED_SHELL, ITEM.BLUE, ITEM.BOMB, ITEM.FIRE]);
+const DROPPED = [ITEM.SHELL, ITEM.BANANA, ITEM.RED_SHELL, ITEM.OIL, ITEM.PAD, ITEM.BLUE, ITEM.BOMB, ITEM.FIRE, ITEM.FAKE];
+const HIT_COLOR = {
+  [ITEM.SHELL]: 0x2ec27e, [ITEM.RED_SHELL]: 0xe63946, [ITEM.BANANA]: 0xffe135,
+  [ITEM.FIRE]: 0xff7b00, [ITEM.FAKE]: 0xff8fa3, [ITEM.BOMB]: 0x333333, [ITEM.BLUE]: 0x2563eb,
+};
 const BOX_SIZE = 1.5;
 const RAINBOW = [0xff595e, 0xffca3a, 0x8ac926, 0x1982c4, 0x6a4c93, 0xff924c];
 
@@ -92,6 +103,13 @@ export class ItemSystem {
     this.onZap = null; // (userSlot) => void, presentation hook
     this.bananas = new ProjectilePool(ITEM.BANANA, BANANA_CAP);
     this.oils = new ProjectilePool(ITEM.OIL, OIL_CAP);
+    this.blues = new ProjectilePool(ITEM.BLUE, BLUE_CAP);
+    this.bombs = new ProjectilePool(ITEM.BOMB, BOMB_CAP);
+    this.fires = new ProjectilePool(ITEM.FIRE, FIRE_CAP);
+    this.fakes = new ProjectilePool(ITEM.FAKE, FAKE_CAP);
+    this._pools = [this.shells, this.reds, this.bananas, this.oils, this.blues, this.bombs, this.fires, this.fakes];
+    this.onBlast = null; // (x, z) => void, presentation hook
+    this.onHorn = null; // (slot) => void
     // Dropped boost pads (plain records, fixed pool).
     this.dropPads = Array.from({ length: PAD_CAP }, () => ({ active: false, id: 0, x: 0, y: 0, z: 0, yaw: 0, age: 0 }));
     this.onLocalEffect = null; // (kart, kind) => void, feedback for the local player
@@ -188,6 +206,49 @@ export class ItemSystem {
       sphere(0.7, 8, 6, 0.2, 0.45, -0.4, 0x656c80),
     ]);
     this.cloudMesh = this._instanced(cloudGeo, toon, CLOUD_CAP);
+
+    // Spiny shell: blue shell with white spikes and little wings.
+    const blueGeo = merge([
+      sphere(0.8, 12, 8, 0, 0.15, 0, 0x2563eb, 1, 0.75, 1),
+      cylinder(0.85, 0.85, 0.22, 14, 0, 0, 0, 0xffffff),
+      cylinder(0.0, 0.2, 0.45, 6, 0, 0.85, 0, 0xffffff),
+      cylinder(0.0, 0.18, 0.4, 6, 0.45, 0.6, 0.3, 0xffffff, 0, 0, -0.6),
+      cylinder(0.0, 0.18, 0.4, 6, -0.45, 0.6, 0.3, 0xffffff, 0, 0, 0.6),
+      cylinder(0.0, 0.18, 0.4, 6, 0, 0.6, -0.5, 0xffffff, -0.6, 0, 0),
+      box(1.2, 0.08, 0.5, 1.1, 0.35, -0.1, 0xffffff, 0, 0, 0.35),
+      box(1.2, 0.08, 0.5, -1.1, 0.35, -0.1, 0xffffff, 0, 0, -0.35),
+    ]);
+    this.blueMesh = this._instanced(blueGeo, toon, BLUE_CAP);
+
+    const bombGeo = merge([
+      sphere(0.75, 12, 10, 0, 0.75, 0, 0x1f2230),
+      cylinder(0.25, 0.25, 0.25, 8, 0, 1.55, 0, 0x9aa1b2),
+      cylinder(0.05, 0.05, 0.35, 5, 0, 1.8, 0, 0x8a6d3b),
+      box(0.12, 0.35, 0.12, 0.55, 0.45, -0.35, 0xf4c20d),
+      box(0.12, 0.35, 0.12, -0.55, 0.45, -0.35, 0xf4c20d),
+      sphere(0.14, 6, 4, 0.25, 0.95, 0.62, 0xffffff),
+      sphere(0.14, 6, 4, -0.25, 0.95, 0.62, 0xffffff),
+    ]);
+    this.bombMesh = this._instanced(bombGeo, toon, BOMB_CAP);
+
+    const fireGeo = merge([
+      sphere(0.55, 10, 8, 0, 0, 0, 0xff6b1a),
+      sphere(0.38, 8, 6, 0, 0.05, 0.12, 0xffd23f),
+    ]);
+    this.fireMesh = this._instanced(fireGeo, this.renderer.basic({ vertexColors: true }), FIRE_CAP);
+
+    // Fake item box: like the real thing, but pinkish with an upside-down look.
+    const fh = BOX_SIZE / 2;
+    const fakeFrame = [];
+    for (const a of [-fh, fh]) {
+      for (const b of [-fh, fh]) {
+        fakeFrame.push(box(BOX_SIZE + t, t, t, 0, a, b, 0xffc2cf));
+        fakeFrame.push(box(t, BOX_SIZE + t, t, a, 0, b, 0xffc2cf));
+        fakeFrame.push(box(t, t, BOX_SIZE + t, a, b, 0, 0xffc2cf));
+      }
+    }
+    const fakeCore = box(BOX_SIZE * 0.86, BOX_SIZE * 0.86, BOX_SIZE * 0.86, 0, 0, 0, 0xff5c7a);
+    this.fakeMesh = this._instanced(merge([...fakeFrame, fakeCore]), toon, FAKE_CAP);
   }
 
   _instanced(geo, mat, count) {
@@ -232,6 +293,10 @@ export class ItemSystem {
     this.reds.releaseAll();
     this.bananas.releaseAll();
     this.oils.releaseAll();
+    this.blues.releaseAll();
+    this.bombs.releaseAll();
+    this.fires.releaseAll();
+    this.fakes.releaseAll();
     for (const p of this.dropPads) p.active = false;
     this._slipCooldown.clear();
     this.nextId = 1;
@@ -252,6 +317,23 @@ export class ItemSystem {
     }
     if (it === ITEM.ROCKET) {
       kart.activateRocket();
+      return true;
+    }
+    if (it === ITEM.GOLDEN) {
+      kart.activateGolden();
+      kart.item = ITEM.GOLDEN; // stays in the slot until the timer runs out
+      return true;
+    }
+    if (it === ITEM.STAR) {
+      kart.activateStar();
+      return true;
+    }
+    if (it === ITEM.FIRE) {
+      kart.itemUses--;
+      if (kart.itemUses > 0) kart.item = ITEM.FIRE; // five fireballs per flower
+    }
+    if (it === ITEM.HORN && this.isAuthority) {
+      this._emit({ t: 'horn', s: kart.slot });
       return true;
     }
     if (it === ITEM.GHOST) {
@@ -301,8 +383,8 @@ export class ItemSystem {
     }
     if (msg.k === ITEM.GHOST) { this._steal(fromSlot); return; }
     if (msg.k === ITEM.CLOUD) { this._cloud(fromSlot); return; }
-    const dropped = [ITEM.SHELL, ITEM.BANANA, ITEM.RED_SHELL, ITEM.OIL, ITEM.PAD];
-    if (!dropped.includes(msg.k)) return;
+    if (msg.k === ITEM.HORN) { this._emit({ t: 'horn', s: fromSlot }); return; }
+    if (!DROPPED.includes(msg.k)) return;
     this.spawnFromKart(msg.k, fromSlot, +msg.x || 0, +msg.z || 0, +msg.yaw || 0, +msg.spd || 0);
   }
 
@@ -316,10 +398,21 @@ export class ItemSystem {
       const ahead = me && this.getKarts().find((k) => k.rank === me.rank - 1 && !k.finished);
       target = ahead ? ahead.slot : -1;
     }
-    if (type === ITEM.SHELL || type === ITEM.RED_SHELL) {
+    if (type === ITEM.BLUE) {
+      // Spiny shell: goes for the leader (or 2nd place when the leader threw it).
+      const karts = this.getKarts();
+      const lead = karts.find((k) => k.rank === 1 && k.slot !== owner && !k.finished)
+        || karts.find((k) => k.rank === 2 && k.slot !== owner && !k.finished);
+      target = lead ? lead.slot : -1;
+    }
+    if (THROWN.has(type)) {
       px = x + sin * 2.4;
       pz = z + cos * 2.4;
-      const v = type === ITEM.RED_SHELL ? Math.max(ITEMS.redShellSpeed, speed + 14) : Math.max(ITEMS.shellSpeed, speed + 20);
+      const v = type === ITEM.RED_SHELL ? Math.max(ITEMS.redShellSpeed, speed + 14)
+        : type === ITEM.BLUE ? ITEMS.blueSpeed
+          : type === ITEM.BOMB ? Math.max(ITEMS.bombSpeed, speed + 8)
+            : type === ITEM.FIRE ? Math.max(ITEMS.fireSpeed, speed + 16)
+              : Math.max(ITEMS.shellSpeed, speed + 20);
       vx = sin * v;
       vz = cos * v;
       // Don't spawn inside a barrier when hugging a wall.
@@ -394,14 +487,15 @@ export class ItemSystem {
         break;
       }
       case 'spawn': {
-        const pool = msg.k === ITEM.SHELL ? this.shells : msg.k === ITEM.RED_SHELL ? this.reds : msg.k === ITEM.OIL ? this.oils : this.bananas;
+        const pool = this._poolFor(msg.k);
         const p = pool.acquire();
         p.active = true;
         p.id = msg.id;
         p.owner = msg.o;
         p.x = msg.x; p.z = msg.z;
         p.idx = this.track.nearestIndex(p.x, p.z, -1);
-        p.y = this.track.roadY(p.idx, this.track.lastLateral) + (msg.k === ITEM.BANANA ? 0.05 : msg.k === ITEM.OIL ? 0.07 : 0.5);
+        const lift = { [ITEM.BANANA]: 0.05, [ITEM.OIL]: 0.07, [ITEM.FAKE]: 0.05, [ITEM.BOMB]: 0.05, [ITEM.BLUE]: 3.5, [ITEM.FIRE]: 0.6 }[msg.k];
+        p.y = this.track.roadY(p.idx, this.track.lastLateral) + (lift ?? 0.5);
         p.target = Number.isInteger(msg.tg) ? msg.tg : -1;
         p.vx = msg.vx; p.vz = msg.vz;
         p.age = 0;
@@ -412,7 +506,7 @@ export class ItemSystem {
         const p = this._find(msg.id);
         if (p) {
           p.active = false;
-          const col = p.type === ITEM.SHELL ? 0x2ec27e : p.type === ITEM.RED_SHELL ? 0xe63946 : 0xffe135;
+          const col = HIT_COLOR[p.type] ?? 0xffe135;
           this.particles.burst(p.x, p.y + 0.3, p.z, 14, 7, 0.6, 0.3, col, -12);
         }
         const k = this.getKart(msg.s);
@@ -460,6 +554,50 @@ export class ItemSystem {
         if (from) this.particles.burst(from.x, from.y + 1.5, from.z, 10, 4, 0.5, 0.3, 0xc9b8ff, -2);
         break;
       }
+      case 'blast': {
+        // Bomb / spiny-shell explosion: everyone the peer simulates inside the radius spins out.
+        const p = msg.id ? this._find(msg.id) : null;
+        if (p) p.active = false;
+        const y = this.track.roadY(this.track.nearestIndex(msg.x, msg.z, -1), this.track.lastLateral);
+        this.particles.burst(msg.x, y + 1.2, msg.z, 40, 14, 0.8, 0.7, 0xff7b00, -6);
+        this.particles.burst(msg.x, y + 1.5, msg.z, 30, 10, 0.9, 0.6, 0xffd23f, -4);
+        this.particles.burst(msg.x, y + 2, msg.z, 20, 5, 1.4, 0.9, 0x3a3a3a, 1);
+        const r2 = msg.r * msg.r;
+        for (const k of this.getKarts()) {
+          if (!k.simulated) continue;
+          const dx = k.x - msg.x, dz = k.z - msg.z;
+          if (dx * dx + dz * dz < r2 && Math.abs(k.y - y) < 6 && k.spinOut() && this.onLocalHit) this.onLocalHit(k);
+        }
+        if (this.onBlast) this.onBlast(msg.x, msg.z);
+        break;
+      }
+      case 'horn': {
+        // Super Horn: shockwave that spins nearby karts and wipes out nearby items (spiny shells too).
+        const u = this.getKart(msg.s);
+        if (!u) break;
+        const R = ITEMS.hornRadius, r2 = R * R;
+        for (let n = 0; n < 36; n++) {
+          const a = (n / 36) * Math.PI * 2;
+          this.particles.spawn(u.x, u.y + 0.6, u.z, Math.cos(a) * R * 2.2, 0.5, Math.sin(a) * R * 2.2, 0.45, 0.45, n % 2 ? 0xffe156 : 0xffffff, 0);
+        }
+        for (const k of this.getKarts()) {
+          if (k === u || !k.simulated) continue;
+          const dx = k.x - u.x, dz = k.z - u.z;
+          if (dx * dx + dz * dz < r2 && Math.abs(k.y - u.y) < 5 && k.spinOut() && this.onLocalHit) this.onLocalHit(k);
+        }
+        for (const pool of this._pools) {
+          for (const p of pool.items) {
+            if (!p.active || (p.owner === msg.s && p.age < 0.5)) continue;
+            const dx = p.x - u.x, dz = p.z - u.z;
+            if (dx * dx + dz * dz < r2) {
+              p.active = false;
+              this.particles.burst(p.x, p.y + 0.3, p.z, 8, 5, 0.4, 0.25, 0xffffff, -8);
+            }
+          }
+        }
+        if (this.onHorn) this.onHorn(msg.s);
+        break;
+      }
       case 'zap': {
         // Lightning: every other kart shrinks. Each peer applies it to the karts it simulates.
         const karts = this.getKarts();
@@ -480,7 +618,18 @@ export class ItemSystem {
   // ---------------------------------------------------------------- simulation
 
   _find(id) {
-    return this.shells.findById(id) || this.reds.findById(id) || this.bananas.findById(id) || this.oils.findById(id);
+    for (const pool of this._pools) {
+      const p = pool.findById(id);
+      if (p) return p;
+    }
+    return null;
+  }
+
+  _poolFor(type) {
+    return {
+      [ITEM.SHELL]: this.shells, [ITEM.RED_SHELL]: this.reds, [ITEM.OIL]: this.oils, [ITEM.BLUE]: this.blues,
+      [ITEM.BOMB]: this.bombs, [ITEM.FIRE]: this.fires, [ITEM.FAKE]: this.fakes,
+    }[type] || this.bananas;
   }
 
   /** Weighted item roll: leaders get defensive items, karts at the back get catch-up items. */
@@ -501,6 +650,13 @@ export class ItemSystem {
       [ITEM.ROCKET, t > 0.65 ? 0.22 * (t - 0.65) / 0.35 : 0], // last places only
       [ITEM.PAD, 0.08],
       [ITEM.CLOUD, kart.rank > 1 && t > 0.25 ? 0.07 : 0], // never from 1st
+      [ITEM.FAKE, 0.14 - 0.1 * t],
+      [ITEM.BOMB, 0.06 + 0.06 * t],
+      [ITEM.FIRE, 0.07],
+      [ITEM.HORN, 0.1 - 0.07 * t], // leaders' answer to the spiny shell
+      [ITEM.GOLDEN, t > 0.35 ? 0.12 * t : 0],
+      [ITEM.STAR, t > 0.5 ? 0.14 * (t - 0.5) * 2 : 0],
+      [ITEM.BLUE, kart.rank > 2 && t > 0.4 ? 0.05 : 0], // rare, never from the front
     ];
     let sum = 0;
     for (const [, w] of table) sum += Math.max(0, w);
@@ -533,6 +689,11 @@ export class ItemSystem {
 
     this._updateShells(dt);
     this._updateReds(dt);
+    this._updateBlues(dt);
+    this._bounceAlong(this.bombs, dt, 30, 4, 0x333333, 0.05, 2.2);
+    this._bounceAlong(this.fires, dt, ITEMS.fireLife, 8, 0xff7b00, 0.6, 0);
+    for (const f of this.fakes.items) if (f.active) f.age += dt;
+    for (const f of this.fires.items) if (f.active && Math.random() < 0.5) this.particles.spawn(f.x, f.y, f.z, 0, 1, 0, 0.25, 0.3, Math.random() < 0.5 ? 0xffd23f : 0xff5a1f, 0);
     const bananas = this.bananas.items;
     for (let i = 0; i < bananas.length; i++) if (bananas[i].active) bananas[i].age += dt;
     const oils = this.oils.items;
@@ -596,6 +757,83 @@ export class ItemSystem {
         s.x += s.vx * dt;
         s.z += s.vz * dt;
       }
+    }
+  }
+
+  /**
+   * Generic bouncing projectile (bombs, fireballs): slides along the road, bounces off walls,
+   * slows down with `drag` and expires after `life` seconds.
+   */
+  _bounceAlong(pool, dt, life, maxBounces, color, lift, drag) {
+    const R = 0.5;
+    for (const s of pool.items) {
+      if (!s.active) continue;
+      s.age += dt;
+      s.spin += dt * 10;
+      if (s.age > life) {
+        s.active = false;
+        continue;
+      }
+      if (drag) {
+        const f = Math.exp(-drag * dt);
+        s.vx *= f; s.vz *= f;
+      }
+      const speed = Math.hypot(s.vx, s.vz);
+      s.idx = this.track.nearestIndex(s.x, s.z, s.idx);
+      s.y = this.track.roadY(s.idx, this.track.lastLateral) + lift;
+      if (speed < 0.05) continue;
+      const dx = s.vx / speed, dz = s.vz / speed;
+      const hit = this.physics.castWall(s.x, s.y + 0.4, s.z, dx, dz, speed * dt + R);
+      if (hit) {
+        const nx = hit.normal.x, nz = hit.normal.z;
+        const nl = Math.hypot(nx, nz) || 1;
+        const dot = (s.vx * nx + s.vz * nz) / nl;
+        s.vx -= (2 * dot * nx) / nl;
+        s.vz -= (2 * dot * nz) / nl;
+        if (++s.bounces > maxBounces) {
+          s.active = false;
+          this.particles.burst(s.x, s.y + 0.3, s.z, 8, 5, 0.4, 0.25, color, -10);
+        }
+      } else {
+        s.x += s.vx * dt;
+        s.z += s.vz * dt;
+      }
+    }
+  }
+
+  /** Spiny shells fly above the racing line, then dive onto their target. Walls don't stop them. */
+  _updateBlues(dt) {
+    const pt = this._pt || (this._pt = { x: 0, z: 0 });
+    for (const s of this.blues.items) {
+      if (!s.active) continue;
+      s.age += dt;
+      s.spin += dt * 9;
+      if (s.age > ITEMS.blueLife) { s.active = false; continue; }
+      s.idx = this.track.nearestIndex(s.x, s.z, s.idx);
+      const tk = s.target >= 0 ? this.getKart(s.target) : null;
+      const tdx = tk ? tk.netX - s.x : 0, tdz = tk ? tk.netZ - s.z : 0;
+      const close = tk && !tk.finished && tdx * tdx + tdz * tdz < 30 * 30;
+      let ax, az, ay;
+      if (close) {
+        ax = tk.netX; az = tk.netZ; ay = tk.y + 0.4;
+      } else {
+        this.track.pointAt(s.idx + 12, 0, 0, pt);
+        ax = pt.x; az = pt.z;
+        ay = this.track.roadY(s.idx, 0) + 3.5;
+      }
+      const cur = Math.atan2(s.vx, s.vz);
+      const want = Math.atan2(ax - s.x, az - s.z);
+      let diff = Math.atan2(Math.sin(want - cur), Math.cos(want - cur));
+      const maxTurn = 7 * dt;
+      diff = Math.max(-maxTurn, Math.min(maxTurn, diff));
+      const heading = cur + diff;
+      const speed = close ? ITEMS.blueSpeed * 1.15 : ITEMS.blueSpeed;
+      s.vx = Math.sin(heading) * speed;
+      s.vz = Math.cos(heading) * speed;
+      s.x += s.vx * dt;
+      s.z += s.vz * dt;
+      s.y += (ay - s.y) * Math.min(1, dt * (close ? 6 : 3));
+      if (Math.random() < 0.5) this.particles.spawn(s.x, s.y, s.z, 0, 0.5, 0, 0.35, 0.25, 0x93c5fd, 0);
     }
   }
 
@@ -685,11 +923,13 @@ export class ItemSystem {
 
       if (k.spinTimer > 0 || k.finished) continue;
       if (k.ghostTimer > 0) continue; // ghosts can't be touched by anything
-      if (k.megaTimer > 0 || k.rocketTimer > 0) {
-        // Mega karts smash projectiles and flatten anyone they touch.
+      if (k.megaTimer > 0 || k.rocketTimer > 0 || k.starTimer > 0) {
+        // Mega / rocket / star karts smash projectiles and flatten anyone they touch.
         this._megaSmash(k, this.shells.items, ITEMS.shellRadius);
         this._megaSmash(k, this.reds.items, ITEMS.shellRadius);
         this._megaSmash(k, this.bananas.items, ITEMS.bananaRadius);
+        this._megaSmash(k, this.fires.items, ITEMS.fireRadius);
+        this._megaSmash(k, this.fakes.items, ITEMS.fakeRadius);
         this._megaSquash(k, karts); // the rocket bowls karts over too
         continue;
       }
@@ -700,6 +940,8 @@ export class ItemSystem {
       this._checkProjectileHits(k, this.shells.items, ITEMS.shellRadius, ITEMS.shellOwnerGrace);
       this._checkProjectileHits(k, this.reds.items, ITEMS.shellRadius, ITEMS.shellOwnerGrace);
       this._checkProjectileHits(k, this.bananas.items, ITEMS.bananaRadius, 0.6);
+      this._checkProjectileHits(k, this.fires.items, ITEMS.fireRadius, 0.3);
+      this._checkProjectileHits(k, this.fakes.items, ITEMS.fakeRadius, 0.6);
       // Oil slicks aren't consumed: they catch every kart that drives through.
       if ((this._slipCooldown.get(k.slot) || 0) <= 0) {
         const r2 = (ITEMS.oilRadius + KART.radius * 0.6) ** 2;
@@ -713,6 +955,35 @@ export class ItemSystem {
             break;
           }
         }
+      }
+    }
+
+    // Bombs go off on contact or when the fuse runs out; spiny shells when they reach their target.
+    for (const b of this.bombs.items) {
+      if (!b.active) continue;
+      let boom = b.age > ITEMS.bombFuse;
+      if (!boom) {
+        const r2 = (ITEMS.bombRadius + KART.radius) ** 2;
+        for (const k of karts) {
+          if ((k.slot === b.owner && b.age < 0.8) || k.finished) continue;
+          const dx = k.netX - b.x, dz = k.netZ - b.z;
+          if (dx * dx + dz * dz < r2 && Math.abs(k.y - k.radius - b.y) < 3) { boom = true; break; }
+        }
+      }
+      if (boom) this._emit({ t: 'blast', id: b.id, x: b.x, z: b.z, r: ITEMS.bombBlast });
+    }
+    for (const s of this.blues.items) {
+      if (!s.active) continue;
+      let tk = s.target >= 0 ? this.getKart(s.target) : null;
+      if (!tk || tk.finished) {
+        // Target gone: hunt the current leader instead.
+        tk = karts.find((k) => k.rank === 1 && !k.finished && k.slot !== s.owner) || null;
+        s.target = tk ? tk.slot : -1;
+        if (!tk) continue;
+      }
+      const dx = tk.netX - s.x, dz = tk.netZ - s.z;
+      if (dx * dx + dz * dz < 2.5 * 2.5 && Math.abs(tk.y - s.y) < 3) {
+        this._emit({ t: 'blast', id: s.id, x: tk.netX, z: tk.netZ, r: ITEMS.blueBlast });
       }
     }
 
@@ -760,7 +1031,7 @@ export class ItemSystem {
   _megaSquash(k, karts) {
     for (let j = 0; j < karts.length; j++) {
       const o = karts[j];
-      if (o === k || o.megaTimer > 0 || o.ghostTimer > 0 || o.rocketTimer > 0 || o.spinTimer > 0 || o.finished || Math.abs(o.y - k.y) > 4) continue;
+      if (o === k || o.megaTimer > 0 || o.ghostTimer > 0 || o.rocketTimer > 0 || o.starTimer > 0 || o.spinTimer > 0 || o.finished || Math.abs(o.y - k.y) > 4) continue;
       const reach = KART.radius * (k.megaScale + o.megaScale) + 0.4;
       const dx = k.netX - o.netX, dz = k.netZ - o.netZ;
       if (dx * dx + dz * dz < reach * reach) this._emit({ t: 'hit', s: o.slot, id: 0 });
@@ -891,6 +1162,58 @@ export class ItemSystem {
     }
     this.padMesh.count = n;
     this.padMesh.instanceMatrix.needsUpdate = true;
+
+    n = 0;
+    for (const b of this.blues.items) {
+      if (!b.active) continue;
+      e.set(0, b.spin, Math.sin(b.spin * 2) * 0.15);
+      q.setFromEuler(e);
+      m.compose(p.set(b.x, b.y, b.z), q, s.set(1.1, 1.1, 1.1));
+      this.blueMesh.setMatrixAt(n++, m);
+      shadows.add(b.x, this.track.roadY(b.idx, 0), b.z, 1.6);
+    }
+    this.blueMesh.count = n;
+    this.blueMesh.instanceMatrix.needsUpdate = true;
+
+    n = 0;
+    for (const b of this.bombs.items) {
+      if (!b.active) continue;
+      // Swells and flashes as the fuse runs down.
+      const left = ITEMS.bombFuse - b.age;
+      const pulse = left < 1 ? 1 + Math.abs(Math.sin(b.age * 18)) * 0.25 : 1;
+      e.set(0, Math.atan2(b.vx, b.vz), 0);
+      q.setFromEuler(e);
+      m.compose(p.set(b.x, b.y, b.z), q, s.set(pulse, pulse, pulse));
+      this.bombMesh.setMatrixAt(n++, m);
+      shadows.add(b.x, b.y, b.z, 1.5);
+      if (Math.random() < 0.4) this.particles.spawn(b.x, b.y + 2, b.z, 0, 1.2, 0, 0.25, 0.18, left < 1 ? 0xff3b3b : 0xffd23f, 0);
+    }
+    this.bombMesh.count = n;
+    this.bombMesh.instanceMatrix.needsUpdate = true;
+
+    n = 0;
+    for (const f of this.fires.items) {
+      if (!f.active) continue;
+      const hop = Math.abs(Math.sin(f.age * 9)) * 0.9;
+      e.set(f.spin, 0, 0);
+      q.setFromEuler(e);
+      m.compose(p.set(f.x, f.y + hop, f.z), q, s.set(1, 1, 1));
+      this.fireMesh.setMatrixAt(n++, m);
+    }
+    this.fireMesh.count = n;
+    this.fireMesh.instanceMatrix.needsUpdate = true;
+
+    n = 0;
+    for (const f of this.fakes.items) {
+      if (!f.active) continue;
+      e.set(Math.PI + time * 0.9 + f.id, time * 1.3 + f.id * 0.7, 0.4);
+      q.setFromEuler(e);
+      m.compose(p.set(f.x, f.y + 1.3 + Math.sin(time * 2 + f.id) * 0.18, f.z), q, s.set(1, 1, 1));
+      this.fakeMesh.setMatrixAt(n++, m);
+      shadows.add(f.x, f.y, f.z, 1.8);
+    }
+    this.fakeMesh.count = n;
+    this.fakeMesh.instanceMatrix.needsUpdate = true;
 
     // Storm clouds over confused karts, with a little rain.
     n = 0;

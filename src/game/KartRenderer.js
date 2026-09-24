@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { MAX_KARTS, DRIFT_TIERS, KART } from './constants.js';
 import { wrapAngle } from './Kart.js';
+import { box, cylinder, sphere, merge } from '../engine/geometry.js';
 import { BODIES, SPOILERS, WHEELS, HATS, getBody, getSpoiler, getWheels, getHat, DEFAULT_LOOK } from './Cosmetics.js';
 
 const PARTS_PER_KART = 7; // body, spoiler, hat, 4 wheels
@@ -70,6 +71,27 @@ export class KartRenderer {
     this.bubbles.count = 0;
     renderer.scene.add(this.bubbles);
 
+    // Bullet Rocket: the kart turns into a big angry bullet (1 instanced draw call).
+    const bulletGeo = merge([
+      cylinder(1.0, 1.0, 2.4, 20, 0, 0, -0.2, 0x1c1d24, Math.PI / 2, 0, 0),
+      sphere(1.0, 20, 14, 0, 0, 1.0, 0x1c1d24, 1, 1, 1.15),
+      cylinder(1.08, 1.08, 0.35, 20, 0, 0, -1.45, 0x9aa1b2, Math.PI / 2, 0, 0),
+      cylinder(0.75, 0.9, 0.3, 16, 0, 0, -1.75, 0x6b7280, Math.PI / 2, 0, 0),
+      sphere(0.3, 10, 8, 0.42, 0.32, 1.72, 0xffffff, 1, 1.25, 0.6),
+      sphere(0.3, 10, 8, -0.42, 0.32, 1.72, 0xffffff, 1, 1.25, 0.6),
+      sphere(0.12, 8, 6, 0.4, 0.3, 1.9, 0x111111),
+      sphere(0.12, 8, 6, -0.4, 0.3, 1.9, 0x111111),
+      box(0.5, 0.1, 0.12, 0.42, 0.7, 1.78, 0xffffff, 0, 0, -0.35),
+      box(0.5, 0.1, 0.12, -0.42, 0.7, 1.78, 0xffffff, 0, 0, 0.35),
+      box(0.5, 0.18, 0.28, 1.12, -0.1, 0.4, 0xffffff, 0, 0, -0.4),
+      box(0.5, 0.18, 0.28, -1.12, -0.1, 0.4, 0xffffff, 0, 0, 0.4),
+    ]);
+    this.bullets = new THREE.InstancedMesh(bulletGeo, renderer.toon({ vertexColors: true }), MAX_RENDERED);
+    this.bullets.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.bullets.frustumCulled = false;
+    this.bullets.count = 0;
+    renderer.scene.add(this.bullets);
+
     this._kartMat = new THREE.Matrix4();
     this._local = new THREE.Matrix4();
     this._out = new THREE.Matrix4();
@@ -109,6 +131,7 @@ export class KartRenderer {
     if (emitSparks) this._sparkTimer = 0;
     const count = Math.min(karts.length, MAX_RENDERED);
     let bubbleCount = 0;
+    let bulletCount = 0;
 
     for (let i = 0; i < count; i++) {
       const k = karts[i];
@@ -158,7 +181,22 @@ export class KartRenderer {
         for (let p = 0; p < PARTS_PER_KART; p++) this.batch.setVisibleAt(this.instances[base + p], false);
         continue;
       }
-      const paint = this._c.setHex(look.color);
+      if (k.rocketTimer > 0 && !k.preview) {
+        // Riding the bullet: hide the kart, draw the bullet in its place.
+        for (let p = 0; p < PARTS_PER_KART; p++) this.batch.setVisibleAt(this.instances[base + p], false);
+        this._e.set(k.visPitch || 0, yaw + Math.sin(performance.now() * 0.02) * 0.02, Math.sin(performance.now() * 0.013) * 0.05);
+        this._q.setFromEuler(this._e);
+        const bs = scale * 0.85;
+        this._local.compose(this._p.set(x, y + 1.0 * bs, z), this._q, this._s.set(bs, bs, bs));
+        this.bullets.setMatrixAt(bulletCount++, this._local);
+        shadows.add(x, k.track.roadY(k.trackIdx, k.trackLateral || 0), z, 3.4 * scale);
+        if (emitSparks) this._emitEffects(k, x, y, z, yaw, scale);
+        continue;
+      }
+      // Super Star: the paint cycles through the rainbow.
+      const paint = k.starTimer > 0
+        ? this._c.setHSL(((performance.now() * 0.0015) + i * 0.13) % 1, 0.95, 0.58)
+        : this._c.setHex(look.color);
       const lift = wheel.radius - 0.3;
 
       // Body (lifted when wheels are taller than stock)
@@ -202,6 +240,8 @@ export class KartRenderer {
       }
     }
 
+    this.bullets.count = bulletCount;
+    if (bulletCount > 0) this.bullets.instanceMatrix.needsUpdate = true;
     this.bubbles.count = bubbleCount;
     if (bubbleCount > 0) this.bubbles.instanceMatrix.needsUpdate = true;
 
@@ -243,10 +283,18 @@ export class KartRenderer {
       const a = Math.random() * Math.PI * 2;
       p.spawn(x + Math.cos(a) * 1.6 * scale, y + Math.random() * 2 * scale, z + Math.sin(a) * 1.6 * scale, 0, 2.5, 0, 0.5, 0.35, Math.random() < 0.5 ? 0xffd23f : 0xff595e, 0);
     }
+    if (k.starTimer > 0) {
+      // Super Star sparkles.
+      for (let n = 0; n < 2; n++) {
+        const a = Math.random() * Math.PI * 2;
+        p.spawn(x + Math.cos(a) * 1.2 * scale, y + 0.4 + Math.random() * 1.4 * scale, z + Math.sin(a) * 1.2 * scale,
+          0, 1.5, 0, 0.4, 0.28, [0xffe156, 0xff595e, 0x8ac926, 0x1982c4, 0xffffff][(Math.random() * 5) | 0], 0);
+      }
+    }
     if (k.rocketTimer > 0) {
-      // Rocket: big flame trail and speed streaks.
+      // Bullet Rocket: exhaust smoke and flame out of the back.
       for (let n = 0; n < 3; n++) {
-        p.spawn(x - sin * 1.8 * scale + (Math.random() - 0.5) * 0.6, y + 0.6 * scale + (Math.random() - 0.5) * 0.5, z - cos * 1.8 * scale + (Math.random() - 0.5) * 0.6,
+        p.spawn(x - sin * 1.9 * scale + (Math.random() - 0.5) * 0.6, y + 0.85 * scale + (Math.random() - 0.5) * 0.5, z - cos * 1.9 * scale + (Math.random() - 0.5) * 0.6,
           -sin * 14, (Math.random() - 0.3) * 2, -cos * 14, 0.3, 0.7, n === 0 ? 0xffffff : Math.random() < 0.5 ? 0xff5a1f : 0xffb703, 0);
       }
     }

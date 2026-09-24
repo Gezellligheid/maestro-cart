@@ -61,7 +61,8 @@ export class AIDriver {
     // Items: use after a short, skill-dependent delay.
     if (k.item !== ITEM.NONE && k.rollTimer <= 0) {
       this.itemDelay += dt;
-      const wait = k.item === ITEM.MUSHROOM ? 0.6 : 1.5 + (1 - this.skill) * 3;
+      const quick = k.item === ITEM.MUSHROOM || k.item === ITEM.GOLDEN || k.item === ITEM.FIRE || k.item === ITEM.STAR;
+      const wait = quick ? 0.6 : 1.5 + (1 - this.skill) * 3;
       if (this.itemDelay > wait) {
         inp.itemPressed = true;
         this.itemDelay = 0;
