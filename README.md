@@ -48,6 +48,10 @@ public broker handles signalling only; gameplay traffic is direct WebRTC.
   wins, or the most balloons after 3 minutes. Solo from the menu, or tick it in the room lobby.
 - **Phones & tablets**: on-screen controls. The kart accelerates by itself; slide on the left pad
   to steer, with Drift, Item, Brake and Respawn buttons on the right.
+- **Controllers** (Xbox / PlayStation / any standard gamepad): A or RT (analog) gas, B or LT brake,
+  left stick steer, RB / LB drift, X / Y item, Back respawn, Start settings, D-pad emotes. Menus
+  work with the D-pad or stick (A select, B back), spectating uses left / right, and the controller
+  rumbles on hits, boosts, bumps and Mega.
 - **Garage** (in the room lobby and between rounds): coins you're holding when a round ends (plus a
   placement bonus) are banked. Spend them on Top Speed, Acceleration, Handling and Drift Boost, and on
   cosmetic parts (bodies, spoilers, wheels, headgear) plus paint/accent colours, previewed in 3D and

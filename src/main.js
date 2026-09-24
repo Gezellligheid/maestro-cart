@@ -10,7 +10,8 @@ import { Track } from './game/Track.js';
 import { Kart, FLAG } from './game/Kart.js';
 import { KartRenderer } from './game/KartRenderer.js';
 import { ItemSystem } from './game/ItemSystem.js';
-import { Input } from './game/Input.js';
+import { Input, PAD } from './game/Input.js';
+import { PadNav } from './ui/PadNav.js';
 import { AIDriver } from './game/AIDriver.js';
 import { RaceManager, formatTime, ordinal } from './game/RaceManager.js';
 import { Garage, botLevels, modsFromLevels, PLACEMENT_BONUS } from './game/Upgrades.js';
@@ -64,6 +65,12 @@ class Game {
     this.touch = new TouchControls(this.input);
     this.spectating = false;
     this.spectateSlot = -1;
+    // Controller: menus via PadNav, Start = settings, D-pad = emotes, rumble on hits.
+    this.padNav = new PadNav({ onBack: (layer) => this._padBack(layer) });
+    this.input.onPad = (button, repeat) => this._onPad(button, repeat);
+    window.addEventListener('gamepadconnected', (e) => {
+      this.toast(`🎮 ${e.gamepad.id.split('(')[0].trim() || 'Controller'} connected: A/RT gas · B/LT brake · RB drift · X item · Start menu`);
+    });
     this.ghostKart = new GhostKart(this.renderer);
     this.ghostRec = new GhostRecorder();
     this.ghost = null;
@@ -672,6 +679,7 @@ class Game {
         k.applyBump(nx, nz, speed);
         if (k === this.localKart) {
           this.audio.blip('bump');
+          this.input.rumble(0.35, 0.25, 120);
           this.renderer.addShake(Math.min(0.5, speed / 30));
         }
         this.particles.burst((k.x + o.x) / 2, Math.min(k.y, o.y) + 0.4, (k.z + o.z) / 2, 6, 5, 0.35, 0.25, 0xffffff, -10);
@@ -959,6 +967,34 @@ class Game {
     }
     this._broadcastResults();
     this._endRace();
+  }
+
+  // =================================================================== controller
+
+  _onPad(button, repeat) {
+    if (button === PAD.START && !repeat) {
+      this.settings.toggle();
+      return;
+    }
+    if (this.padNav.handle(button)) return;
+    if (!this.inRace || this.podium.active) return;
+    if (this.spectating) {
+      if (button === PAD.LEFT || button === PAD.RIGHT) this._cycleSpectate(button === PAD.RIGHT ? 1 : -1);
+      else if (button === PAD.Y && !repeat) this._stopSpectate(true);
+      return;
+    }
+    if (repeat) return;
+    // D-pad: emotes (up 👋, right 😂, down 😤, left 🏆).
+    const emote = { [PAD.UP]: 0, [PAD.RIGHT]: 1, [PAD.DOWN]: 2, [PAD.LEFT]: 3 }[button];
+    if (emote != null) this.sendEmote(emote);
+  }
+
+  /** B on a controller: close whatever overlay is on top. */
+  _padBack(layer) {
+    if (layer === 'settings') this.settings.close();
+    else if (layer === 'stats-panel') this.statsPanel.close();
+    else if (layer === 'garage') this.closeGarage();
+    else if (layer === 'podium-ui') document.getElementById('btn-podium-skip').click();
   }
 
   _canSpectate() {
@@ -1303,6 +1339,9 @@ class Game {
   /** Edge-triggered sound effects for the local kart. */
   _localSfx(k) {
     const s = this._sfxState;
+    const spin = k.spinTimer > 0;
+    if (spin && !s.spin) this.input.rumble(0.9, 0.5, 380);
+    s.spin = spin;
     const trick = k.trickTimer > 0;
     if (trick && !s.trick) { this.audio.blip('trick'); this.hud.subtitle('Trick!', 0.8); }
     s.trick = trick;
@@ -1312,7 +1351,10 @@ class Game {
     if (k.coins > s.coins) this.audio.blip('coin');
     s.coins = k.coins;
     const boost = k.boostTimer > 0;
-    if (boost && !s.boost) this.audio.blip('boost');
+    if (boost && !s.boost) {
+      this.audio.blip('boost');
+      this.input.rumble(0.15, 0.45, 160);
+    }
     s.boost = boost;
     const shield = k.shieldTimer > 0;
     if (shield && !s.shield) this.audio.blip('shield');
@@ -1323,6 +1365,7 @@ class Game {
     const mega = k.megaTimer > 0;
     if (mega && !s.mega) {
       this.audio.blip('mega');
+      this.input.rumble(0.7, 0.7, 450);
       this.hud.flash('MEGA!', 1.2, '#ffd23f');
       this.renderer.addShake(0.6);
     }

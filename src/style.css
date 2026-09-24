@@ -131,3 +131,10 @@ body.touch #hud-spectate {
 #hud-center {
   -webkit-text-stroke: 3px rgb(0 0 0 / 0.35);
 }
+
+/* Controller highlight (menus navigated with the D-pad / stick). */
+.pad-focus {
+  outline: 3px solid #fcd34d;
+  outline-offset: 3px;
+  box-shadow: 0 0 0 6px rgb(252 211 77 / 0.25);
+}
