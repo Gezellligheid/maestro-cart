@@ -43,9 +43,11 @@ export class Kart {
     this.track = track;
     this.simulated = control !== 'remote';
 
+    // Start on the road surface, wherever the landscape put the start line.
+    const groundY = spawn.y ?? (track && spawn.idx != null ? track.heightAt(spawn.idx) : 0);
     this.body = this.simulated
-      ? physics.createKartBody(spawn.x, KART.radius + 0.05, spawn.z)
-      : physics.createKinematicKartBody(spawn.x, KART.radius + 0.05, spawn.z);
+      ? physics.createKartBody(spawn.x, groundY + KART.radius + 0.05, spawn.z)
+      : physics.createKinematicKartBody(spawn.x, groundY + KART.radius + 0.05, spawn.z);
     this.collider = this.body.collider(0);
     this.radius = KART.radius;
     this.megaTimer = 0; // Mega: triple size for a few seconds
@@ -78,7 +80,7 @@ export class Kart {
     this._n = { x: 0, y: 1, z: 0 }; // ground normal under the kart
 
     // Interpolated render state
-    this.x = spawn.x; this.y = KART.radius; this.z = spawn.z;
+    this.x = spawn.x; this.y = groundY + KART.radius; this.z = spawn.z;
     this.prevX = this.x; this.prevY = this.y; this.prevZ = this.z;
     this.yaw = spawn.yaw; this.prevYaw = spawn.yaw;
     this.vx = 0; this.vy = 0; this.vz = 0;
@@ -401,7 +403,7 @@ export class Kart {
     const v = this.body.linvel();
     this.x = t.x; this.y = t.y; this.z = t.z;
     this.vx = v.x; this.vy = v.y; this.vz = v.z;
-    if (this.y < -8) this.respawn();
+    if (this.y < this.track.heightAt(this.trackIdx) - 14) this.respawn(); // fell off
     this.netX = this.x; this.netZ = this.z;
   }
 

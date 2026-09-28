@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { RibbonBuilder, box, cylinder, merge, mulberry32, paint } from '../engine/geometry.js';
 import { THEMES, rainbowColor, buildScenery, buildGrandstand, buildTireStacks, buildNightSky } from './TrackDecor.js';
+import { Terrain } from './Terrain.js';
 
 // Moving hazard per theme (see Movers.js).
 const MOVER_KIND = { meadow: 'cow', desert: 'tumbleweed', snow: 'snowball', mushroom: 'hopper', beach: 'crab', volcano: 'firebar', ghost: 'ghost', rainbow: 'star' };
@@ -17,6 +18,7 @@ const EDGE_STD = BASE_WIDTH + CURB_WIDTH + BARRIER_GAP + 0.7; // deck edge where
 const BARRIER_STEP = 3; // samples per barrier segment
 const CHECKPOINTS = 18; // one every 60 samples
 const SHORTCUT_HALF = 3.4; // dirt shortcut half-width
+const RUNOFF = 12; // open-kerb corners: grass run-off width beyond the kerb
 const GROUND_SIZE = 1400;
 const OVERPASS_RISE = 7.5;
 const BRIDGE_RISE = 5.5;
@@ -88,7 +90,9 @@ export class Track {
     this.hazards = [];
     this.movers = [];
     this.shortcuts = [];
+    this.viaducts = [];
     this.crossings = [];
+    this.terrain = null;
 
     this.group = null;
     this.wallColliders = [];
@@ -125,6 +129,9 @@ export class Track {
       this.crossings = [];
       this.style = 'classic';
     }
+    // Landscape first (every theme except space): the road will follow it.
+    this.terrain = t.space ? null : new Terrain(t, this.seed);
+    if (this.terrain) this._fitTerrain();
     this._planFeatures(rand);
 
     this._dispose();
@@ -134,11 +141,13 @@ export class Track {
     this.renderer.setAtmosphere(this.sky);
     this._prepareTerrain(rand);
     this._planShortcuts();
+    this._planOpenEdges();
     if (!t.space) this._buildGround();
     this._buildRoad();
     this._buildRoadCollider();
     this._buildBarriers();
     this._buildShortcuts();
+    this._buildOpenEdges();
     this._buildGantry();
     this._buildArches();
     this._buildFeatures();
@@ -517,6 +526,7 @@ export class Track {
     this.pads = [];
     this.hazards = [];
     this.movers = [];
+    this.viaducts = [];
 
     const blocked = [];
     const reserve = (a, b) => blocked.push([a, b]);
@@ -576,9 +586,31 @@ export class Track {
         list.push({ a, b, ...extra });
       }
     };
-    const bridgeCount = this.crossings.length ? (rand() < 0.3 ? 1 : 0) : (rand() < 0.6 ? 1 : 0) + (rand() < 0.25 ? 1 : 0);
+    if (this.terrain) {
+      this._roadProfile(this.baseHeight);
+      const { tunnels, viaducts } = this._terrainRuns(this.baseHeight);
+      const startSpan = Math.ceil(80 / seg);
+      const clash = (a, b) => {
+        for (let i = a; i <= b; i += 2) {
+          if (circDist(i, 0) < startSpan) return true;
+          for (const c of this.crossings) {
+            if (circDist(i, c.lower) < 50 || circDist(i, c.upper) < c.deckHalf + c.ramp + 10) return true;
+          }
+        }
+        return false;
+      };
+      // Where a mountain is in the way the road tunnels through; elsewhere it becomes a cutting.
+      for (const r of tunnels) {
+        if (clash(r.a - 6, r.b + 6)) continue;
+        this.tunnels.push(r);
+        reserve(r.a - 8, r.b + 8);
+      }
+      for (const r of viaducts) if (!clash(r.a, r.b)) this.viaducts.push(r);
+    }
+    let bridgeCount = this.crossings.length ? (rand() < 0.3 ? 1 : 0) : (rand() < 0.6 ? 1 : 0) + (rand() < 0.25 ? 1 : 0);
+    if (this.terrain) bridgeCount = 0; // real valleys get viaducts instead
     place(bridgeCount, 120, 0.9, this.bridges, { type: t.space ? 'span' : 'water', rise: BRIDGE_RISE });
-    if (!t.space) place(rand() < 0.5 ? 1 : rand() < 0.5 ? 2 : 0, 75, 0.8, this.tunnels, {}, TUNNEL_HILL.width + MAX_BARRIER + 3);
+    if (!t.space && !this.terrain) place(rand() < 0.5 ? 1 : rand() < 0.5 ? 2 : 0, 75, 0.8, this.tunnels, {}, TUNNEL_HILL.width + MAX_BARRIER + 3);
     place(range(t.jumps), 11, 0.25, this.jumps, {});
     // Moving hazards (cows, snowballs, fire bars…) on fairly straight bits.
     place(3 + Math.floor(rand() * 4), 10, 0.5, this.movers, { kind: MOVER_KIND[t.id] });
@@ -618,7 +650,8 @@ export class Track {
       this.width[i] = BASE_WIDTH + WIDTH_VAR * g * mask[i];
     }
 
-    // Rolling hills under the road.
+    // Rolling hills under the road (space tracks; everywhere else the terrain sets the heights).
+    if (!this.terrain) {
     const amp = t.hills[0] + rand() * (t.hills[1] - t.hills[0]);
     const hf = [2 + Math.floor(rand() * 2), 3 + Math.floor(rand() * 3), 6 + Math.floor(rand() * 3)];
     const hp = [rand() * 6.28, rand() * 6.28, rand() * 6.28];
@@ -637,17 +670,23 @@ export class Track {
       const k = 0.16 / maxSlope;
       for (let i = 0; i < S; i++) this.baseHeight[i] *= k;
     }
+    }
 
     // Final height = hills + bridge/overpass rises + jump ramps.
     this.height.set(this.baseHeight);
     for (const br of this.bridges) {
       const span = br.b - br.a;
       const ramp = br.deckA - br.a;
+      // Overpasses clear the lower road even when the ground under it is higher.
+      const mid = circ(Math.round((br.deckA + br.deckB) / 2));
+      const rise = br.type === 'overpass' && this.terrain
+        ? br.rise + Math.max(0, this.baseHeight[circ(br.lower)] - this.baseHeight[mid])
+        : br.rise;
       for (let j = 0; j <= span; j++) {
         let s = 1;
         if (j < ramp) s = j / ramp;
         else if (j > span - (br.b - br.deckB)) s = (span - j) / (br.b - br.deckB);
-        this.height[circ(br.a + j)] = br.rise * s * s * (3 - 2 * s);
+        this.height[circ(br.a + j)] = this.baseHeight[circ(br.a + j)] + rise * s * s * (3 - 2 * s);
       }
     }
     const jumpH = t.id === 'snow' || t.id === 'rainbow' ? 2.4 : 1.9;
@@ -738,6 +777,127 @@ export class Track {
     return null;
   }
 
+  _viaductAt(i) {
+    for (const v of this.viaducts) if (this._inRange(i, v.a, v.b + 1)) return v;
+    return null;
+  }
+
+  _tunnelAt(i) {
+    for (const t of this.tunnels) if (this._inRange(i, t.a, t.b + 1)) return t;
+    return null;
+  }
+
+  // ------------------------------------------------------------------ terrain-first heights
+
+  /**
+   * Road height at every sample from the landscape: averaged across the road, smoothed, kept
+   * above lakes / lava, flat at the start, and limited to a drivable 10% grade.
+   */
+  _roadProfile(out) {
+    const T = this.terrain;
+    const seg = this.segmentLength;
+    const p = { x: 0, z: 0 };
+    for (let i = 0; i < S; i++) {
+      let sum = 0;
+      for (const lat of [-7, 0, 7]) {
+        this.pointAt(i, lat, 0, p);
+        sum += T.height(p.x, p.z);
+      }
+      out[i] = sum / 3;
+    }
+    blurCircular(out, 10, 3);
+    const floor = Math.max(T.waterLevel, T.lavaLevel) + 2.5;
+    if (Number.isFinite(floor)) for (let i = 0; i < S; i++) out[i] = Math.max(out[i], floor);
+    // Level start straight.
+    const a = S - Math.ceil(70 / seg), b = S + Math.ceil(60 / seg);
+    let mean = 0;
+    for (let i = a; i <= b; i++) mean += out[circ(i)];
+    mean /= b - a + 1;
+    for (let i = a; i <= b; i++) out[circ(i)] = mean;
+    // Grade limit: relax any sample that's too steep relative to its neighbours.
+    const step = 0.1 * seg;
+    for (let it = 0; it < 500; it++) {
+      let changed = false;
+      for (let i = 0; i < S; i++) {
+        const l = out[circ(i - 1)], r = out[circ(i + 1)], h = out[i];
+        const hi = Math.min(l, r) + step, lo = Math.max(l, r) - step;
+        let v = h;
+        if (lo > hi) v = (l + r) / 2;
+        else if (h > hi) v = hi;
+        else if (h < lo) v = lo;
+        if (Math.abs(v - h) > 1e-4) { out[i] = v; changed = true; }
+      }
+      if (!changed) break;
+    }
+  }
+
+  /** Stretches where the ground towers over the road (tunnels) or falls away under it (viaducts). */
+  _terrainRuns(base) {
+    const T = this.terrain;
+    const seg = this.segmentLength;
+    const p = { x: 0, z: 0 };
+    const covered = new Uint8Array(S), raised = new Uint8Array(S);
+    for (let i = 0; i < S; i++) {
+      let lo = Infinity, hi = -Infinity;
+      for (const lat of [-12, 0, 12]) {
+        this.pointAt(i, lat, 0, p);
+        const h = T.height(p.x, p.z);
+        lo = Math.min(lo, h); hi = Math.max(hi, h);
+      }
+      covered[i] = lo - base[i] > 9.5 ? 1 : 0;
+      raised[i] = base[i] - hi > 3.5 ? 1 : 0;
+    }
+    const runs = (flag, minLen, pad) => {
+      const out = [];
+      let s0 = 0;
+      while (s0 < S && flag[s0]) s0++;
+      if (s0 >= S) return out;
+      let i = 0;
+      while (i < S) {
+        const k = circ(s0 + i);
+        if (!flag[k]) { i++; continue; }
+        const a = s0 + i;
+        while (i < S && flag[circ(s0 + i)]) i++;
+        const b = s0 + i - 1;
+        if ((b - a + 1) * seg >= minLen) out.push({ a: a - pad, b: b + pad });
+      }
+      // Merge runs that nearly touch.
+      for (let k = out.length - 1; k > 0; k--) {
+        if (out[k].a - out[k - 1].b < Math.ceil(20 / seg)) { out[k - 1].b = out[k].b; out.splice(k, 1); }
+      }
+      return out;
+    };
+    return { tunnels: runs(covered, 14, 2), viaducts: runs(raised, 22, 3) };
+  }
+
+  /** Try a few placements of the landscape under the layout and keep the most exciting fit. */
+  _fitTerrain() {
+    const T = this.terrain;
+    const rand = mulberry32((this.seed ^ 0x51f7e) >>> 0);
+    const tmp = new Float32Array(S);
+    let best = null;
+    for (let c = 0; c < 10; c++) {
+      const ox = c === 0 ? 0 : (rand() - 0.5) * 1200, oz = c === 0 ? 0 : (rand() - 0.5) * 1200;
+      T.setOffset(ox, oz);
+      this._roadProfile(tmp);
+      const { tunnels, viaducts } = this._terrainRuns(tmp);
+      let mean = 0, lo = Infinity, hi = -Infinity;
+      for (let i = 0; i < S; i++) { mean += tmp[i]; lo = Math.min(lo, tmp[i]); hi = Math.max(hi, tmp[i]); }
+      mean /= S;
+      let v = 0;
+      for (let i = 0; i < S; i++) v += (tmp[i] - mean) ** 2;
+      const relief = Math.sqrt(v / S);
+      const tunnelLen = tunnels.reduce((n, r) => n + (r.b - r.a) * this.segmentLength, 0);
+      let score = Math.min(relief, 22) / 4;
+      score -= Math.abs(Math.min(tunnels.length, 4) - 2) * 2.5;
+      score -= Math.max(0, tunnelLen - 380) / 60;
+      score -= Math.abs(Math.min(viaducts.length, 4) - 2) * 1.5;
+      score -= Math.max(0, hi - lo - 65) / 8; // a big climb is fun, scaling the summit is not
+      if (!best || score > best.score) best = { score, ox, oz };
+    }
+    T.setOffset(best.ox, best.oz);
+  }
+
   _inRange(idx, a, b) {
     return (idx >= a && idx < b) || (idx + S >= a && idx + S < b) || (idx - S >= a && idx - S < b);
   }
@@ -812,6 +972,13 @@ export class Track {
 
   _prepareTerrain(rand) {
     this._noisePhase = [rand() * 100, rand() * 100, rand() * 100];
+    // Bucket the centre line into 30 m cells for fast nearest-sample lookups.
+    const C = 30, N = Math.ceil(GROUND_SIZE / C) + 2;
+    this._grid = { C, N, cells: Array.from({ length: N * N }, () => []) };
+    for (let i = 0; i < S; i++) {
+      const cx = Math.floor((this.px[i] + GROUND_SIZE / 2) / C), cz = Math.floor((this.pz[i] + GROUND_SIZE / 2) / C);
+      if (cx >= 0 && cz >= 0 && cx < N && cz < N) this._grid.cells[cz * N + cx].push(i);
+    }
     let r = 0;
     for (let i = 0; i < S; i++) r = Math.max(r, Math.hypot(this.px[i], this.pz[i]));
     this.oceanRadius = r + 60;
@@ -826,7 +993,98 @@ export class Track {
    * Ground height at (x, z): rises to meet the road's rolling hills near the track and has its
    * own gentle undulation further away. Returns { y, d } (d = distance past the barriers).
    */
-  terrainAt(x, z, out = { y: 0, d: 0, j: 0 }) {
+  /** Nearest centre-line sample within ~60 m (or -1); squared distance in this._nd2. */
+  _nearestFast(x, z) {
+    const g = this._grid;
+    const cx = Math.floor((x + GROUND_SIZE / 2) / g.C), cz = Math.floor((z + GROUND_SIZE / 2) / g.C);
+    let best = Infinity, j = -1;
+    for (let dz = -2; dz <= 2; dz++) {
+      const rz = cz + dz;
+      if (rz < 0 || rz >= g.N) continue;
+      for (let dx = -2; dx <= 2; dx++) {
+        const rx = cx + dx;
+        if (rx < 0 || rx >= g.N) continue;
+        const cell = g.cells[rz * g.N + rx];
+        for (let k = 0; k < cell.length; k++) {
+          const i = cell[k];
+          const ex = x - this.px[i], ez = z - this.pz[i];
+          const d = ex * ex + ez * ez;
+          if (d < best) { best = d; j = i; }
+        }
+      }
+    }
+    this._nd2 = best;
+    return j;
+  }
+
+  /**
+   * Ground height at (x, z). With a landscape: the terrain itself, carved where the road runs —
+   * a cliff cutting where the hillside is above the road, an embankment where it's just below,
+   * untouched valleys under viaducts and a covered trench along tunnels. Returns { y, d, j }
+   * (d = distance past the barriers; pass exact=false to skip the far-field search).
+   */
+  terrainAt(x, z, out = { y: 0, d: 0, j: 0 }, exact = true) {
+    if (!this.terrain) return this._terrainAtFlat(x, z, out);
+    out.open = false;
+    const H = this.terrain.height(x, z);
+    let j = this._nearestFast(x, z);
+    let d2 = this._nd2;
+    if (j < 0 && exact) {
+      for (let i = 0; i < S; i += 3) {
+        const ex = x - this.px[i], ez = z - this.pz[i];
+        const d = ex * ex + ez * ez;
+        if (d < d2) { d2 = d; j = i; }
+      }
+    }
+    let y = H, d = Infinity;
+    if (j >= 0) {
+      const edgeOff = this.barrierOffset(j) + 0.7;
+      d = Math.sqrt(d2) - edgeOff;
+      if (d < 64) {
+        const lat = -(x - this.px[j]) * this.tz[j] + (z - this.pz[j]) * this.tx[j];
+        const R = this.baseHeight[j] + this.slope[j] * Math.max(-edgeOff, Math.min(edgeOff, lat));
+        const tunnel = this._tunnelAt(j), via = this._viaductAt(j);
+        const diff = H - R;
+        const open = d >= 0 && d < RUNOFF + 7 && this._openAt(j, lat);
+        if (open) {
+          // Open-kerb corner: flat grass run-off level with the road, blending back to the land.
+          const flat = R - 0.08;
+          const land = diff > 0 ? H : R - 0.3 + (diff + 0.3) * smooth01(d / 8);
+          y = flat + (land - flat) * smooth01((d - RUNOFF - 1) / 6);
+          out.open = true;
+        } else if (d < 0) {
+          y = tunnel || via ? Math.min(H, R - 1.2) : R - 0.6;
+        } else if (tunnel) {
+          // Trench beside the tube, hidden under the tunnel's cap.
+          y = d < 10 ? Math.min(H, R - 1.2) : Math.min(H, R - 1.2) + (H - Math.min(H, R - 1.2)) * smooth01((d - 10) / 6);
+        } else if (via && diff < 0) {
+          y = H; // the valley stays a valley under a viaduct
+        } else if (diff > 0) {
+          // Cutting: a steep rock face rising from just beyond the barrier.
+          y = R + diff * smooth01(Math.max(0, d - 1.2) / (1.5 + diff * 0.3));
+        } else {
+          // Embankment down to the ground.
+          y = R - 0.3 + (diff + 0.3) * smooth01(d / (4 + Math.min(40, -diff * 1.1)));
+        }
+      }
+    }
+    if (this.theme.ocean) {
+      const r = Math.hypot(x, z);
+      if (r > this.oceanRadius) y = -1.5;
+      else if (r > this.oceanRadius - 40) y += (-1.5 - y) * smooth01((r - (this.oceanRadius - 40)) / 40);
+    }
+    for (const sc of this.shortcuts) {
+      const sd = this._shortcutDist(sc, x, z, this._sd || (this._sd = { dist: 0, d: 0 }));
+      if (sd.dist < 12) {
+        const py = this._shortcutY(sc, sc.ax + sc.ux * sd.d, sc.az + sc.uz * sd.d, sd.d) - 0.5;
+        y += (py - y) * (1 - smooth01(sd.dist / 12));
+      }
+    }
+    out.y = y; out.d = d; out.j = j;
+    return out;
+  }
+
+  _terrainAtFlat(x, z, out) {
     let best = Infinity, j = 0;
     for (let i = 0; i < S; i += 2) {
       const dx = x - this.px[i], dz = z - this.pz[i];
@@ -862,6 +1120,10 @@ export class Track {
   // ================================================================== building
 
   _buildGround() {
+    if (this.terrain) {
+      this._buildLandscape();
+      return;
+    }
     const t = this.theme;
     const size = GROUND_SIZE;
     const seg = 140;
@@ -936,9 +1198,9 @@ export class Track {
       if (R.center && Math.floor(i / 5) % 2 === 0) band(i, () => -0.18, () => 0.18, 0.08, R.center);
 
       // Shoulders out to the railings, and side walls wherever the road is raised.
-      const deck = this._deckAt(i);
+      const deck = this._deckAt(i) || this._viaductAt(i);
       // Raised above the terrain (bridges, overpasses, jumps); banking itself is met by the ground.
-      const raised = hAt(i) - this.baseHeight[i] > 0.02 || hAt(i + 1) - this.baseHeight[circ(i + 1)] > 0.02;
+      const raised = hAt(i) - this.baseHeight[i] > 0.02 || hAt(i + 1) - this.baseHeight[circ(i + 1)] > 0.02 || !!this._viaductAt(i);
       const shoulder = raised ? 0x9aa0a8 : R.shoulder;
       band(i, (w) => w + CURB_WIDTH, edge, 0.045, shoulder);
       band(i, (w) => -edge(w), (w) => -w - CURB_WIDTH, 0.045, shoulder);
@@ -1030,6 +1292,7 @@ export class Track {
   }
 
   _buildBarriers() {
+    this._barrierEuler = this._barrierEuler || new THREE.Euler();
     const segments = Math.floor(S / BARRIER_STEP);
     const count = segments * 2;
     const geo = new THREE.BoxGeometry(1, 1, 1);
@@ -1055,8 +1318,10 @@ export class Track {
         const yaw = Math.atan2(dx, dz);
         const cx = (a.x + b.x) / 2, cz = (a.z + b.z) / 2;
         const cy = (this.roadY(i, side * this.barrierOffset(i)) + this.roadY(i + BARRIER_STEP, side * this.barrierOffset(i + BARRIER_STEP))) / 2 + height / 2;
-        q.setFromAxisAngle(up, yaw);
-        m.compose(p.set(cx, cy, cz), q, s.set(thick, height, len));
+        // Pitch each block with the road so barriers on hills don't step like stairs.
+        const dy = this.roadY(i + BARRIER_STEP, side * this.barrierOffset(i + BARRIER_STEP)) - this.roadY(i, side * this.barrierOffset(i));
+        q.setFromEuler(this._barrierEuler.set(-Math.atan2(dy, len - 0.35), yaw, 0, 'YXZ'));
+        m.compose(p.set(cx, cy, cz), q, s.set(thick, height, Math.hypot(len, dy)));
         mesh.setMatrixAt(n, m);
         mesh.setColorAt(n, this.theme.space ? new THREE.Color(rainbowColor(k)) : k % 2 === 0 ? (side > 0 ? ca : cc) : cb);
         // Collider is taller than the visual barrier so Mega-sized karts can't climb over.
@@ -1187,6 +1452,7 @@ export class Track {
       const p = at(d, 0);
       if (this._nearFeature(p.x, p.z)) return null;
       if (this.theme.ocean && Math.hypot(p.x, p.z) > this.oceanRadius - 25) return null;
+      if (this.terrain && Math.abs(this.terrain.height(p.x, p.z) - (sc.ya + (sc.yb - sc.ya) * (d / len))) > 4) return null;
       for (let j = 0; j < S; j += 2) {
         if (this._inRange(j, a - 25, b + 25)) continue;
         const r = this.barrierOffset(j) + HALF + 10;
@@ -1291,8 +1557,150 @@ export class Track {
     return false;
   }
 
+  /** Is (sample j, lateral lat) beside an open-kerb run-off? */
+  _openAt(j, lat) {
+    if (!this._open) return false;
+    return this._open[lat > 0 ? 1 : -1][Math.floor(circ(j) / BARRIER_STEP)] === 1;
+  }
+
+  /**
+   * Open-kerb corners: on some bends the barrier gives way to a flat grass run-off (slow, but
+   * no wall), like classic circuit corners. Only where the land beside the road is level and
+   * nothing else (cliffs, viaducts, tunnels, jumps, another part of the track) is nearby.
+   */
+  _planOpenEdges() {
+    this._open = null;
+    this.openRuns = [];
+    if (!this.terrain) return;
+    const segs = Math.floor(S / BARRIER_STEP);
+    const open = { 1: new Uint8Array(segs), [-1]: new Uint8Array(segs) };
+    const rand = mulberry32((this.seed ^ 0x0be7c0) >>> 0);
+    const seg = this.segmentLength;
+    const p = { x: 0, z: 0 };
+    const busy = (i) => this._tunnelAt(i) || this._viaductAt(i) || this._deckAt(i)
+      || this.jumps.some((jp) => this._inRange(i, jp.a - 6, jp.b + 8))
+      || circDist(i, 0) < Math.ceil(60 / seg);
+    const ok = (i, side) => {
+      if (busy(i)) return false;
+      const k = Math.floor(circ(i) / BARRIER_STEP);
+      for (const sc of this.shortcuts) {
+        if (sc.side !== side) continue;
+        for (let o = -4; o <= 4; o++) if (sc.cut.has(((k + o) % segs + segs) % segs)) return false;
+      }
+      const bo = this.barrierOffset(i);
+      const R = this.roadY(i, side * (bo + 0.7));
+      for (let d = 1; d <= RUNOFF + 4; d += 3.5) {
+        this.pointAt(i, side * (bo + d), 0, p);
+        if (Math.abs(this.terrain.height(p.x, p.z) - R) > 2.5) return false;
+        if (this.theme.ocean && Math.hypot(p.x, p.z) > this.oceanRadius - 30) return false;
+        const T = this.terrain;
+        if (this.terrain.height(p.x, p.z) < Math.max(T.waterLevel, T.lavaLevel) + 1) return false;
+      }
+      // No other stretch of road just beyond the run-off.
+      this.pointAt(i, side * (bo + RUNOFF + 10), 0, p);
+      const j = this._nearestFast(p.x, p.z);
+      return j < 0 || circDist(j, i) < 25;
+    };
+    // Candidate runs: barrier segments on the inside / outside of real bends.
+    for (const wantInner of [true, false]) {
+      let run = null;
+      const flush = () => {
+        if (run && run.k1 - run.k0 >= 3 && rand() < (wantInner ? 0.6 : 0.35)) {
+          for (let k = run.k0 - 1; k <= run.k1 + 1; k++) open[run.side][((k % segs) + segs) % segs] = 1;
+        }
+        run = null;
+      };
+      for (let k = 0; k < segs; k++) {
+        const i = k * BARRIER_STEP;
+        const bend = wrap(this.yaw[circ(i + 6)] - this.yaw[circ(i - 6)]);
+        let side = 0;
+        if (Math.abs(bend) > 0.3) {
+          const outside = bend > 0 ? 1 : -1;
+          side = wantInner ? -outside : outside;
+        }
+        if (side && ok(i, side) && ok(i + BARRIER_STEP, side) && (!run || run.side === side)) {
+          if (!run) run = { k0: k, k1: k, side };
+          else run.k1 = k;
+        } else {
+          flush();
+        }
+      }
+      flush();
+    }
+    // Shortcut gaps already handle their own sides; keep everything else as runs for building.
+    for (const side of [1, -1]) {
+      let k0 = -1;
+      for (let k = 0; k <= segs; k++) {
+        const on = k < segs && open[side][k];
+        if (on && k0 < 0) k0 = k;
+        if (!on && k0 >= 0) { this.openRuns.push({ side, k0, k1: k - 1 }); k0 = -1; }
+      }
+    }
+    this._open = open;
+  }
+
+  /** Run-off surfaces (drivable grass), an invisible fence at their far edge and striped boards. */
+  _buildOpenEdges() {
+    if (!this.openRuns.length) return;
+    const parts = [];
+    const a = { x: 0, z: 0 }, b = { x: 0, z: 0 };
+    const wall = (x0, z0, x1, z1, y) => {
+      const dx = x1 - x0, dz = z1 - z0;
+      const len = Math.hypot(dx, dz);
+      if (len < 0.1) return;
+      this.wallColliders.push(this.physics.addWall((x0 + x1) / 2, y + 1.6, (z0 + z1) / 2, 0.45, 2.9, len / 2 + 0.2, Math.atan2(dx, dz)));
+    };
+    for (const run of this.openRuns) {
+      const { side } = run;
+      const i0 = run.k0 * BARRIER_STEP, i1 = (run.k1 + 1) * BARRIER_STEP;
+      const n = i1 - i0 + 1;
+      const verts = new Float32Array(n * 6);
+      const idx = new Uint32Array((n - 1) * 6);
+      const far = (i) => this.barrierOffset(i) + RUNOFF + 1;
+      for (let s = 0; s < n; s++) {
+        const i = i0 + s;
+        const bo = this.barrierOffset(i);
+        const y = this.roadY(i, side * (bo + 0.7)) - 0.02;
+        // Winding matches the road collider: left point first.
+        const lIn = side * (bo + 0.2), lOut = side * far(i);
+        const [left, right] = side > 0 ? [lIn, lOut] : [lOut, lIn];
+        this.pointAt(i, left, 0, a);
+        this.pointAt(i, right, 0, b);
+        verts.set([a.x, y, a.z, b.x, y, b.z], s * 6);
+        if (s < n - 1) idx.set([s * 2, s * 2 + 1, s * 2 + 2, s * 2 + 1, s * 2 + 3, s * 2 + 2], s * 6);
+      }
+      this.wallColliders.push(this.physics.addTrimesh(verts, idx));
+      // Invisible fence along the far edge, plus end caps back to the barriers.
+      for (let i = i0; i < i1; i += BARRIER_STEP) {
+        const j = Math.min(i + BARRIER_STEP, i1);
+        this.pointAt(i, side * far(i), 0, a);
+        this.pointAt(j, side * far(j), 0, b);
+        wall(a.x, a.z, b.x, b.z, this.roadY(i, side * this.barrierOffset(i)));
+        if (((i - i0) / BARRIER_STEP) % 2 === 0) {
+          // Red-and-white striped board.
+          const yaw = Math.atan2(b.x - a.x, b.z - a.z);
+          const y = this.roadY(i, side * this.barrierOffset(i));
+          const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
+          parts.push(box(0.25, 0.9, 3.2, mx, y + 0.55, mz, 0xffffff, 0, yaw, 0));
+          for (const off of [-0.9, 0.3]) {
+            const ox = Math.sin(yaw) * off, oz = Math.cos(yaw) * off;
+            parts.push(box(0.27, 0.92, 0.6, mx + ox, y + 0.55, mz + oz, 0xe63946, 0, yaw, 0));
+          }
+          parts.push(box(0.2, 0.55, 0.2, mx, y + 0.2, mz, 0x555555, 0, yaw, 0));
+        }
+      }
+      for (const i of [i0, i1]) {
+        this.pointAt(i, side * this.barrierOffset(i), 0, a);
+        this.pointAt(i, side * far(i), 0, b);
+        wall(a.x, a.z, b.x, b.z, this.roadY(i, side * this.barrierOffset(i)));
+      }
+    }
+    if (parts.length) this.group.add(new THREE.Mesh(merge(parts), this.renderer.toon({ vertexColors: true })));
+  }
+
   /** Is barrier segment k on this side cut open for a shortcut? */
   _barrierCut(side, k) {
+    if (this._open && this._open[side][k]) return true;
     for (const sc of this.shortcuts) if (sc.side === side && sc.cut.has(k)) return true;
     return false;
   }
@@ -1518,7 +1926,40 @@ export class Track {
       const frameGeo = frameRb.build();
       frameGeo.computeVertexNormals();
       parts.push(frameGeo);
-      parts.push(this._tunnelHill(tu, R, RY, t.hillColor));
+      parts.push(this.terrain ? this._tunnelCap(tu, R, RY) : this._tunnelHill(tu, R, RY, t.hillColor));
+    }
+
+    // Viaducts: pillars from the valley floor up to the deck, cross-braced when tall.
+    const STYLE = {
+      meadow: 0x2f6fd6, desert: 0xc98f55, snow: 0x9aa4ae, mushroom: 0xf1e3c8,
+      beach: 0x8b5a2b, volcano: 0x3a2d2a, ghost: 0x4a3b30,
+    };
+    const pc = STYLE[t.id] ?? 0x8b9099;
+    for (const vd of this.viaducts) {
+      const stepN = Math.max(4, Math.round(14 / this.segmentLength));
+      for (let i = vd.a; i <= vd.b; i += stepN) {
+        const lat = edge - 1.4;
+        const tops = [], bots = [], pts = [];
+        for (const side of [-1, 1]) {
+          this.pointAt(i, side * lat, 0, p);
+          const top = this.roadY(i, side * lat) - 0.9;
+          const bottom = Math.min(this.terrain.height(p.x, p.z), top) - 2;
+          tops.push(top); bots.push(bottom); pts.push([p.x, p.z]);
+          const h = top - bottom;
+          if (h > 1) parts.push(box(1.4, h, 1.4, p.x, bottom + h / 2, p.z, pc));
+        }
+        const yaw = this.yaw[circ(i)];
+        this.pointAt(i, 0, 0, q);
+        const beamY = Math.min(tops[0], tops[1]) - 0.4;
+        parts.push(box(lat * 2 + 1.4, 0.8, 1.1, q.x, beamY, q.z, pc, 0, yaw, 0));
+        const low = Math.max(bots[0], bots[1]) + 1;
+        const tall = beamY - low;
+        if (tall > 6) {
+          const len = Math.hypot(lat * 2, tall);
+          const tilt = Math.atan2(lat * 2, tall);
+          for (const sgn of [-1, 1]) parts.push(box(0.35, len, 0.35, q.x, low + tall / 2, q.z, pc, 0, yaw, sgn * tilt));
+        }
+      }
     }
 
     if (parts.length === 0) return;
@@ -1588,6 +2029,123 @@ export class Track {
     return g;
   }
 
+  /**
+   * Terrain tunnel: a cap that re-covers the mountain over the tube (the ground under it is a
+   * trench) and portal faces from the arch up to the mountainside at both ends.
+   */
+  _tunnelCap(tu, R, RY) {
+    const rb = new RibbonBuilder();
+    const T = this.terrain;
+    const W = EDGE_STD + 16;
+    const N = 14;
+    const p = { x: 0, z: 0 };
+    const col = new THREE.Color();
+    const grass = new THREE.Color(this.theme.ground), rock = new THREE.Color(this.theme.rock);
+    const capY = (i, lat) => {
+      this.pointAt(i, lat, 0, p);
+      return Math.max(T.height(p.x, p.z), this.heightAt(i) + RY + 2);
+    };
+    const at = (i, lat, y) => {
+      this.pointAt(i, lat, 0, p);
+      return [p.x, y, p.z];
+    };
+    const step = 2;
+    for (let i = tu.a; i < tu.b; i += step) {
+      const j = Math.min(i + step, tu.b);
+      for (let k = 0; k < N; k++) {
+        const l0 = -W + (2 * W * k) / N, l1 = -W + (2 * W * (k + 1)) / N;
+        const y00 = capY(i, l0), y01 = capY(i, l1), y10 = capY(j, l0), y11 = capY(j, l1);
+        const a0 = at(i, l0, y00), a1 = at(i, l1, y01), b1 = at(j, l1, y11), b0 = at(j, l0, y10);
+        const steep = Math.abs(y01 - y00) / ((2 * W) / N) > 0.9;
+        const hex = col.copy(steep ? rock : grass).multiplyScalar(0.85 + 0.12 * Math.sin(k * 1.7 + i * 0.9)).getHex();
+        rb.quad(a0[0], a0[1], a0[2], b0[0], b0[1], b0[2], b1[0], b1[1], b1[2], a1[0], a1[1], a1[2], hex);
+      }
+    }
+    // Portal faces: from the arch (or just below the road beside it) up to the cap.
+    const face = col.copy(rock).multiplyScalar(0.8).getHex();
+    for (const i of [tu.a, tu.b]) {
+      const h = this.heightAt(i);
+      for (let k = 0; k < N * 2; k++) {
+        const l0 = -W + (W * k) / N, l1 = -W + (W * (k + 1)) / N;
+        const inner = (l) => (Math.abs(l) < R ? h + RY * Math.sqrt(1 - (l / R) ** 2) : h - 1.5);
+        const o0 = at(i, l0, capY(i, l0)), o1 = at(i, l1, capY(i, l1));
+        const n0 = at(i, l0, inner(l0)), n1 = at(i, l1, inner(l1));
+        rb.quad(n0[0], n0[1], n0[2], n1[0], n1[1], n1[2], o1[0], o1[1], o1[2], o0[0], o0[1], o0[2], face);
+      }
+    }
+    const g = rb.build();
+    g.computeVertexNormals();
+    return g;
+  }
+
+  /**
+   * The landscape mesh: fine enough (~5.5 m) for cliff cuttings, coloured by what it is —
+   * grass, rock on steep faces, snow on high peaks, sand by the water, lava streaks on the
+   * volcano — plus lake / lava surfaces filling the low ground.
+   */
+  _buildLandscape() {
+    const t = this.theme, T = this.terrain;
+    const size = GROUND_SIZE;
+    const seg = 256;
+    const geo = new THREE.PlaneGeometry(size, size, seg, seg);
+    geo.rotateX(-Math.PI / 2);
+    paint(geo, t.ground);
+    const pos = geo.attributes.position;
+    const tr = { y: 0, d: 0, j: 0 };
+    const near = new Float32Array(pos.count);
+    for (let i = 0; i < pos.count; i++) {
+      this.terrainAt(pos.getX(i), pos.getZ(i), tr, false);
+      pos.setY(i, tr.y - 0.05);
+      near[i] = tr.d;
+    }
+    geo.computeVertexNormals();
+    const nrm = geo.attributes.normal;
+    const col = geo.attributes.color;
+    const rand = mulberry32(this.seed ^ 0x9e3779b9);
+    const base = new THREE.Color(t.ground), rock = new THREE.Color(t.rock), c = new THREE.Color();
+    const sand = new THREE.Color(t.id === 'snow' ? 0xd8e6ee : 0xe6d3a1);
+    const lavaA = new THREE.Color(0xff5a1f), lavaB = new THREE.Color(0xffa01c);
+    const water = Math.max(T.waterLevel, T.lavaLevel);
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+      const ny = nrm.getY(i);
+      c.copy(base).multiplyScalar(0.86 + rand() * 0.1 + Math.sin(x * 0.05) * Math.cos(z * 0.043) * 0.05);
+      if (Number.isFinite(water) && y < water + 1.2) c.lerp(sand, 0.8);
+      const rocky = 1 - smooth01((ny - 0.55) / 0.2); // 0 on gentle ground, 1 on cliffs
+      if (rocky > 0) c.lerp(rock, rocky * 0.9);
+      if (y > T.snowLine) c.lerp(new THREE.Color(0xffffff), smooth01((y - T.snowLine) / 8) * (ny > 0.5 ? 1 : 0.4));
+      const va = T.volcanoAngle(x, z);
+      if (va && va.d > 0.12 && Math.sin(va.a * 9 + va.d * 5 + Math.sin(va.a * 3) * 2) > 0.93) c.copy(rand() < 0.5 ? lavaA : lavaB);
+      if (t.ocean && Math.hypot(x, z) > this.oceanRadius) c.setHex(t.ocean).multiplyScalar(0.95 + rand() * 0.1);
+      col.setXYZ(i, c.r, c.g, c.b);
+    }
+    const mat = t.lava ? this.renderer.toon({ vertexColors: true, emissive: 0x220800 }) : this.renderer.toon({ vertexColors: true });
+    this.group.add(new THREE.Mesh(geo, mat));
+
+    // Lakes (or lava lakes) filling everything below their level.
+    if (Number.isFinite(T.lavaLevel)) {
+      const lava = new THREE.Mesh(new THREE.PlaneGeometry(size, size), this.renderer.basic({ color: 0xff5a1f }));
+      lava.rotation.x = -Math.PI / 2;
+      lava.position.y = T.lavaLevel;
+      this.group.add(lava);
+      const v = T.volcano;
+      if (v) {
+        // Glowing lake in the crater.
+        const disk = new THREE.Mesh(new THREE.CircleGeometry(v.r * 0.12, 24), this.renderer.basic({ color: 0xffa01c }));
+        disk.rotation.x = -Math.PI / 2;
+        disk.position.set(v.x - T.ox, v.h * 0.78, v.z - T.oz);
+        this.group.add(disk);
+      }
+    }
+    if (Number.isFinite(T.waterLevel)) {
+      const lake = new THREE.Mesh(new THREE.PlaneGeometry(size, size),
+        this.renderer.toon({ color: t.id === 'snow' ? 0xbfe6f5 : t.water, transparent: true, opacity: 0.88 }));
+      lake.rotation.x = -Math.PI / 2;
+      lake.position.y = T.waterLevel;
+      this.group.add(lake);
+    }
+  }
+
   /** Keep scenery out of ponds, overpasses and tunnel hills. */
   _nearFeature(x, z) {
     for (const sc of this.shortcuts) {
@@ -1613,7 +2171,15 @@ export class Track {
         const z = (rand() - 0.5) * (GROUND_SIZE - 80);
         this.terrainAt(x, z, tr);
         if (tr.d < minD || tr.d > maxD) continue;
+        if (tr.open) continue; // keep run-offs clear
         if (this._nearFeature(x, z)) continue;
+        if (this.terrain) {
+          const T = this.terrain;
+          if (tr.y < Math.max(T.waterLevel, T.lavaLevel) + 1) continue;
+          const sx = this.terrainAt(x + 3, z, this._tr2 || (this._tr2 = { y: 0, d: 0, j: 0 })).y;
+          const sz = this.terrainAt(x, z + 3, this._tr2).y;
+          if (Math.abs(sx - tr.y) > 2.4 || Math.abs(sz - tr.y) > 2.4) continue; // too steep
+        }
         if (t.ocean && Math.hypot(x, z) > this.oceanRadius - 18) continue;
         return { x, y: tr.y, z };
       }
@@ -1628,8 +2194,16 @@ export class Track {
 
     // Distant mountains ring (one instanced draw call).
     if (t.mountains) {
-      const mountGeo = new THREE.ConeGeometry(1, 1, 6);
-      mountGeo.translate(0, 0.5, 0);
+      let mountGeo;
+      if (t.id === 'meadow') {
+        // Tall round hills on the horizon.
+        mountGeo = new THREE.CapsuleGeometry(0.5, 1, 6, 12);
+        mountGeo.translate(0, 1, 0);
+        mountGeo.scale(1, 0.5, 1);
+      } else {
+        mountGeo = new THREE.ConeGeometry(1, 1, 6);
+        mountGeo.translate(0, 0.5, 0);
+      }
       const mountains = new THREE.InstancedMesh(mountGeo, this.renderer.toon({ color: 0xffffff }), 28);
       const m = new THREE.Matrix4();
       const q = new THREE.Quaternion();

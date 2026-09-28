@@ -362,15 +362,17 @@ const DECOR = {
   volcano({ rand, group, renderer, spot, track }) {
     // Giant volcano on the horizon with a glowing crater.
     const ang = rand() * Math.PI * 2;
-    const r = 330;
-    const cx = Math.cos(ang) * r, cz = Math.sin(ang) * r;
-    const cone = new THREE.CylinderGeometry(22, 130, 150, 12, 1, true);
-    cone.translate(cx, 72, cz);
-    const lava = new THREE.CylinderGeometry(21, 21, 3, 12);
-    lava.translate(cx, 147, cz);
-    const parts = [paint(cone.toNonIndexed(), 0x2b2226), paint(lava.toNonIndexed(), 0xff5a1f)];
-    for (const g of parts) g.deleteAttribute('uv');
-    group.add(new THREE.Mesh(merge(parts), renderer.toon({ vertexColors: true, side: THREE.DoubleSide })));
+    if (!track.terrain?.volcano) { // the landscape already has a real one
+      const r = 330;
+      const cx = Math.cos(ang) * r, cz = Math.sin(ang) * r;
+      const cone = new THREE.CylinderGeometry(22, 130, 150, 12, 1, true);
+      cone.translate(cx, 72, cz);
+      const lava = new THREE.CylinderGeometry(21, 21, 3, 12);
+      lava.translate(cx, 147, cz);
+      const parts = [paint(cone.toNonIndexed(), 0x2b2226), paint(lava.toNonIndexed(), 0xff5a1f)];
+      for (const g of parts) g.deleteAttribute('uv');
+      group.add(new THREE.Mesh(merge(parts), renderer.toon({ vertexColors: true, side: THREE.DoubleSide })));
+    }
 
     // Fire torches along the barriers.
     const torch = merge([

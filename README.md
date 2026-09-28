@@ -24,6 +24,13 @@ public broker handles signalling only; gameplay traffic is direct WebRTC.
   Dune Dash (pyramids, sand traps), Frosty Summit (snowmen, ice), Toadstool Gorge (giant mushrooms),
   Coconut Cove (palms, ocean), Magma Keep (lava, torches, volcano), Star Road (rainbow road in space)
   and Spooky Hollow (plank road, ghosts, pumpkins).
+- **Landscape first**: every theme (except Star Road) generates its own terrain before the track:
+  rolling hills with tall round peaks, desert mesas with sheer cliffs, jagged snowy ranges, a giant
+  volcano with lava streaks and lava lakes, lakes in the valleys. The layout is fitted onto it and
+  the road follows the ground (max 10% grade): where a mountain is in the way it tunnels through,
+  over valleys and lakes it crosses on viaducts with pillars, along slopes it runs in cliff cuttings.
+- **Open-kerb corners**: some bends have no barrier, just kerbs and a flat grass run-off (slow)
+  with striped boards at its edge.
 - **Moving hazards** per theme (cows, tumbleweeds, rolling snowballs, hopping mushrooms, crabs,
   spinning fire bars, ghosts, bouncing stars) run on the race clock, so every peer sees them in the
   same spot; touching one spins you out. Some tracks race at sunset or night (stars + moon), with rain
