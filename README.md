@@ -73,7 +73,7 @@ public broker handles signalling only; gameplay traffic is direct WebRTC.
   makes every kart driving through it fishtail), mushroom, triple mushroom (3 uses), boost pad drop
   (anyone can use it), bubble shield (absorbs the next hit), coin magnet, ghost (6 s intangible,
   steals a rival's item), storm cloud (reverses the leader's steering), lightning bolt (back half:
-  shrinks everyone else), Bullet Rocket (last places: you turn into a bullet that drives itself for
+  shrinks everyone else), Bullet Rocket (back half of the field: you turn into a bullet that drives itself for
   6 s at 1.7× speed and bowls karts over), the rare Mega Mushroom (3× size for 10 s), fake item box
   (a trap), bomb (thrown, blows up on contact or after ~3 s), Fire Flower (5 bouncing fireballs),
   Super Horn (shockwave that spins nearby karts and destroys nearby items, even a Spiny Shell),

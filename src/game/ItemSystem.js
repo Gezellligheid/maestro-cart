@@ -658,7 +658,7 @@ export class ItemSystem {
       [ITEM.TRIPLE, 0.04 + 0.18 * t],
       [ITEM.OIL, 0.18 - 0.1 * t],
       [ITEM.GHOST, t > 0.15 && t < 0.9 ? 0.07 : 0],
-      [ITEM.ROCKET, t > 0.65 ? 0.22 * (t - 0.65) / 0.35 : 0], // last places only
+      [ITEM.ROCKET, t > 0.45 ? 0.07 + 0.2 * (t - 0.45) / 0.55 : 0], // back half: a real chance near the back
       [ITEM.PAD, 0.08],
       [ITEM.CLOUD, kart.rank > 1 && t > 0.25 ? 0.07 : 0], // never from 1st
       [ITEM.FAKE, 0.14 - 0.1 * t],
