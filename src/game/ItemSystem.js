@@ -305,7 +305,8 @@ export class ItemSystem {
   // ---------------------------------------------------------------- item use
 
   /** Fire the kart's held item. Works for the local player and for bots. */
-  useItem(kart) {
+  /** `back` = throw backwards (shells, bombs, fireballs); dropped items always go behind. */
+  useItem(kart, back = false) {
     if (kart.item === ITEM.NONE || kart.rollTimer > 0 || kart.spinTimer > 0) return false;
     const it = kart.item;
     kart.item = ITEM.NONE;
@@ -367,9 +368,9 @@ export class ItemSystem {
       return true;
     }
     if (this.isAuthority) {
-      this.spawnFromKart(it, kart.slot, kart.x, kart.z, kart.yaw, kart.speed);
+      this.spawnFromKart(it, kart.slot, kart.x, kart.z, kart.yaw, kart.speed, back);
     } else if (this.onRequest) {
-      this.onRequest({ t: 'use', k: it, s: kart.slot, x: kart.x, z: kart.z, yaw: kart.yaw, spd: kart.speed });
+      this.onRequest({ t: 'use', k: it, s: kart.slot, x: kart.x, z: kart.z, yaw: kart.yaw, spd: kart.speed, b: back ? 1 : 0 });
     }
     return true;
   }
@@ -385,14 +386,22 @@ export class ItemSystem {
     if (msg.k === ITEM.CLOUD) { this._cloud(fromSlot); return; }
     if (msg.k === ITEM.HORN) { this._emit({ t: 'horn', s: fromSlot }); return; }
     if (!DROPPED.includes(msg.k)) return;
-    this.spawnFromKart(msg.k, fromSlot, +msg.x || 0, +msg.z || 0, +msg.yaw || 0, +msg.spd || 0);
+    this.spawnFromKart(msg.k, fromSlot, +msg.x || 0, +msg.z || 0, +msg.yaw || 0, +msg.spd || 0, msg.b === 1);
   }
 
-  spawnFromKart(type, owner, x, z, yaw, speed) {
+  spawnFromKart(type, owner, x, z, yaw, speed, back = false) {
+    // Thrown backwards: aim the other way. A red shell thrown back just flies straight (like a
+    // green one); the spiny shell always goes for the leader.
+    const backThrow = back && THROWN.has(type) && type !== ITEM.BLUE;
+    if (backThrow) {
+      if (type === ITEM.RED_SHELL) type = ITEM.SHELL;
+      yaw += Math.PI;
+      speed = 0;
+    }
     const sin = Math.sin(yaw), cos = Math.cos(yaw);
     let px, pz, vx = 0, vz = 0;
     let target = -1;
-    if (type === ITEM.RED_SHELL) {
+    if (type === ITEM.RED_SHELL && !backThrow) {
       // Chase whoever is one place ahead of the thrower.
       const me = this.getKart(owner);
       const ahead = me && this.getKarts().find((k) => k.rank === me.rank - 1 && !k.finished);
@@ -406,9 +415,11 @@ export class ItemSystem {
       target = lead ? lead.slot : -1;
     }
     if (THROWN.has(type)) {
-      px = x + sin * 2.4;
-      pz = z + cos * 2.4;
-      const v = type === ITEM.RED_SHELL ? Math.max(ITEMS.redShellSpeed, speed + 14)
+      const out = backThrow ? 2.8 : 2.4; // clear of the kart's own tail
+      px = x + sin * out;
+      pz = z + cos * out;
+      const v = backThrow ? (type === ITEM.BOMB ? 18 : type === ITEM.FIRE ? 32 : 36)
+        : type === ITEM.RED_SHELL ? Math.max(ITEMS.redShellSpeed, speed + 14)
         : type === ITEM.BLUE ? ITEMS.blueSpeed
           : type === ITEM.BOMB ? Math.max(ITEMS.bombSpeed, speed + 8)
             : type === ITEM.FIRE ? Math.max(ITEMS.fireSpeed, speed + 16)

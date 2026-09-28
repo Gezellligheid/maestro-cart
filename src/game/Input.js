@@ -5,6 +5,7 @@ const KEYS = {
   right: ['KeyD', 'ArrowRight'],
   drift: ['Space'],
   item: ['ShiftLeft', 'ShiftRight', 'KeyE'],
+  itemBack: ['KeyQ'],
   respawn: ['KeyR'],
 };
 
@@ -24,7 +25,7 @@ const REPEAT_RATE = 0.13;
  * them, so a tap shorter than one physics tick is never lost.
  *
  * Controller: A / RT accelerate (RT is analog), B / LT brake & reverse, left stick steers,
- * RB / LB hop & drift, X / Y use item, Back respawns. Every button press is also reported to
+ * RB / LB hop & drift, X use item, Y throw it backwards, Back respawns. Every button press is also reported to
  * `onPad(button, repeat)` for menus, emotes and spectating; the D-pad and the stick also send
  * auto-repeating direction events with `repeat` = true (menus use them, racing ignores them).
  */
@@ -37,6 +38,7 @@ export class Input {
       drift: false,
       driftPressed: false,
       itemPressed: false,
+      itemBackPressed: false, // throw the item backwards
       respawnPressed: false,
     };
     this.enabled = true;
@@ -55,6 +57,7 @@ export class Input {
       this.down.add(e.code);
       if (KEYS.drift.includes(e.code)) this.state.driftPressed = true;
       if (KEYS.item.includes(e.code)) this.state.itemPressed = true;
+      if (KEYS.itemBack.includes(e.code)) this.state.itemBackPressed = true;
       if (KEYS.respawn.includes(e.code)) this.state.respawnPressed = true;
     });
     window.addEventListener('keyup', (e) => this.down.delete(e.code));
@@ -101,7 +104,8 @@ export class Input {
         if (d && !this._prevBtn[i]) {
           this.usingPad = true;
           if (i === PAD.RB || i === PAD.LB) s.driftPressed = true;
-          if (i === PAD.X || i === PAD.Y) s.itemPressed = true;
+          if (i === PAD.X) s.itemPressed = true;
+          if (i === PAD.Y) s.itemBackPressed = true;
           if (i === PAD.BACK) s.respawnPressed = true;
           if (this.onPad) this.onPad(i);
         }
@@ -168,6 +172,7 @@ export class Input {
   consumeEdges() {
     this.state.driftPressed = false;
     this.state.itemPressed = false;
+    this.state.itemBackPressed = false;
     this.state.respawnPressed = false;
   }
 }

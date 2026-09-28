@@ -10,7 +10,7 @@ export class AIDriver {
     this.kart = kart;
     this.track = track;
     this.skill = skill; // 0..1
-    this.input = { throttle: 1, steer: 0, drift: false, driftPressed: false, itemPressed: false, respawnPressed: false };
+    this.input = { throttle: 1, steer: 0, drift: false, driftPressed: false, itemPressed: false, itemBackPressed: false, respawnPressed: false };
     this.laneOffset = (Math.random() - 0.5) * 8;
     this.laneTimer = 0;
     this.itemDelay = 0;

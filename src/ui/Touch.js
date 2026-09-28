@@ -58,6 +58,7 @@ export class TouchControls {
     hold('touch-brake', () => { input.touch.brake = true; }, () => { input.touch.brake = false; });
     hold('touch-item', () => { input.state.itemPressed = true; }, () => {});
     hold('touch-respawn', () => { input.state.respawnPressed = true; }, () => {});
+    hold('touch-item-back', () => { input.state.itemBackPressed = true; }, () => {});
     // No page scrolling / zooming while racing.
     this.root.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
   }

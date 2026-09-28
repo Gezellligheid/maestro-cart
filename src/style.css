@@ -76,6 +76,15 @@
   @apply grid h-10 w-10 place-items-center rounded-full bg-black/40 text-xl backdrop-blur-sm transition hover:scale-110 hover:bg-black/60 active:scale-95;
 }
 
+.nametag {
+  @apply absolute left-0 top-0 flex items-center gap-1.5 whitespace-nowrap rounded-full bg-black/55 py-0.5 pl-1 pr-2.5 text-xs font-extrabold text-white shadow;
+  will-change: transform, opacity;
+}
+
+.nametag b {
+  @apply grid h-4 min-w-4 place-items-center rounded-full px-1 text-[10px] font-black text-[#111];
+}
+
 .emote-anchor {
   @apply absolute left-0 top-0;
   will-change: transform;

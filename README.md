@@ -31,6 +31,9 @@ public broker handles signalling only; gameplay traffic is direct WebRTC.
 - **Shortcuts**: many tracks have a fenced dirt path through the infield of a tight corner (a gap
   in the inside barrier; dashed on the minimap). Dirt is a little slower than tarmac, but the path
   is much shorter, and there are coins on it.
+- **Throw backwards**: Q (controller Y, touch BACK) throws shells, bombs and fireballs behind you
+  instead of ahead (a red shell thrown back flies straight). Bananas, oil and fake boxes always drop behind.
+- **Nametags** float above every other kart, with their race position, fading out with distance.
 - **Emotes**: keys 1–4 (or the bar at the bottom) pop a 👋 😂 😤 🏆 bubble over your kart for
   everyone in the room; CPU racers emote too.
 - **Spectate**: after you finish, "Watch the race" (or Tab) follows the racers still on track;

@@ -59,7 +59,7 @@ export class Emotes {
       const hidden = v.z > 1 || v.z < -1;
       b.el.style.display = hidden ? 'none' : '';
       if (hidden) continue;
-      b.el.style.transform = `translate(${((v.x + 1) / 2) * w}px, ${((1 - v.y) / 2) * h}px) translate(-50%, -100%)`;
+      b.el.style.transform = `translate(${((v.x + 1) / 2) * w}px, ${((1 - v.y) / 2) * h}px) translate(-50%, calc(-100% - 24px))`;
       b.el.style.opacity = String(Math.min(1, b.t / 0.4));
     }
   }

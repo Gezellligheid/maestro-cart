@@ -95,11 +95,11 @@
           <span><kbd>S</kbd><kbd>↓</kbd> Brake / Reverse</span>
           <span><kbd>A</kbd><kbd>D</kbd> Steer</span>
           <span><kbd>Space</kbd> Hop / Drift</span>
-          <span><kbd>Shift</kbd><kbd>E</kbd> Use item</span>
+          <span><kbd>Shift</kbd><kbd>E</kbd> Use item · <kbd>Q</kbd> throw back</span>
           <span><kbd>R</kbd> Respawn</span>
           <span><kbd>M</kbd> Mute · <kbd>Esc</kbd> Settings</span>
           <span><kbd>1</kbd>–<kbd>4</kbd> Emotes</span>
-          <span class="col-span-2">🎮 <kbd>A</kbd><kbd>RT</kbd> gas · <kbd>B</kbd><kbd>LT</kbd> brake · <kbd>RB</kbd> drift · <kbd>X</kbd> item · <kbd>Back</kbd> respawn · <kbd>Start</kbd> settings · D-pad emotes</span>
+          <span class="col-span-2">🎮 <kbd>A</kbd><kbd>RT</kbd> gas · <kbd>B</kbd><kbd>LT</kbd> brake · <kbd>RB</kbd> drift · <kbd>X</kbd> item · <kbd>Y</kbd> throw back · <kbd>Back</kbd> respawn · <kbd>Start</kbd> settings · D-pad emotes</span>
           <span><kbd>←</kbd><kbd>→</kbd> Spectate (after finishing)</span>
         </div>
       </div>
@@ -157,6 +157,7 @@
       <div id="hud-sub" class="absolute left-1/2 top-[46%] -translate-x-1/2 text-center text-lg font-bold text-white/85 drop-shadow"></div>
       <div id="hud-stats" class="absolute bottom-1 left-1/2 -translate-x-1/2 font-mono text-[10px] text-white/40"></div>
 
+      <div id="nametag-layer" class="absolute inset-0 overflow-hidden"></div>
       <div id="emote-layer" class="absolute inset-0 overflow-hidden"></div>
       <div id="emote-bar" class="pointer-events-auto absolute bottom-5 left-1/2 flex -translate-x-1/2 gap-1.5">
         <button data-emote="0" class="emote-btn" aria-label="Wave (1)">👋</button>
@@ -183,6 +184,7 @@
       <button id="touch-item" class="touch-btn pointer-events-auto absolute bottom-32 right-8 h-16 w-16 bg-amber-400/80 text-[#1b1400]">ITEM</button>
       <button id="touch-brake" class="touch-btn pointer-events-auto absolute bottom-32 right-28 h-14 w-14 bg-rose-500/60">BRAKE</button>
       <button id="touch-respawn" class="touch-btn pointer-events-auto absolute bottom-52 right-10 h-11 w-11 bg-black/45 text-lg" aria-label="Respawn">↺</button>
+      <button id="touch-item-back" class="touch-btn pointer-events-auto absolute bottom-52 right-24 h-11 w-11 bg-amber-400/60 text-[10px] text-[#1b1400]" aria-label="Throw item backwards">BACK</button>
     </div>
 
     <!-- Race over: waving chequered flag, then a fade into the podium -->

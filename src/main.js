@@ -31,6 +31,7 @@ import { GhostRecorder, GhostKart, saveGhost, loadGhost } from './game/Ghost.js'
 import { Cup, CUP_RACES } from './game/Cup.js';
 import { Balloons } from './game/Balloons.js';
 import { Emotes } from './ui/Emotes.js';
+import { NameTags } from './ui/NameTags.js';
 import { TouchControls } from './ui/Touch.js';
 import { StatsPanel } from './ui/StatsPanel.js';
 import {
@@ -62,6 +63,7 @@ class Game {
     this.records = new Records();
     this.statsPanel = new StatsPanel(this.records);
     this.emotes = new Emotes((i) => this.sendEmote(i));
+    this.nameTags = new NameTags();
     this.touch = new TouchControls(this.input);
     this.spectating = false;
     this.spectateSlot = -1;
@@ -503,6 +505,7 @@ class Game {
   }
 
   _clearRace() {
+    this.nameTags.clear();
     this._stopSpectate(false);
     this.ghost = null;
     this.ghostKart.show(false);
@@ -622,7 +625,10 @@ class Game {
       if (!k.simulated) continue;
       const inp = k.control === 'bot' ? k.ai.update(dt) : input;
       k.simulate(dt, inp);
-      if (k.controlsEnabled && inp.itemPressed && !k.finished) this.items.useItem(k);
+      if (k.controlsEnabled && !k.finished) {
+        if (inp.itemPressed) this.items.useItem(k);
+        else if (inp.itemBackPressed) this.items.useItem(k, true);
+      }
       if (k.controlsEnabled && inp.respawnPressed) k.respawn();
     }
     this.input.consumeEdges();
@@ -1286,7 +1292,11 @@ class Game {
       this.renderer.updateOrbitCamera(time, b.cx, b.cz, Math.max(230, Math.max(b.maxX - b.minX, b.maxZ - b.minZ) * 0.6));
     }
 
-    if (this.inRace && !this.podium.active) this.emotes.update(dt, this.kartBySlot, this.renderer.camera);
+    if (this.inRace && !this.podium.active) {
+      const viewed = (this.spectating && this.kartBySlot[this.spectateSlot]) || this.localKart;
+      this.nameTags.update(this.karts, viewed, this.renderer.camera);
+      this.emotes.update(dt, this.kartBySlot, this.renderer.camera);
+    }
     this.renderer.trackPerf(dt);
     this.renderer.render();
     this._updateStats(dt);
