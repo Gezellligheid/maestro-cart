@@ -161,7 +161,9 @@ export class Renderer {
    */
   updateChaseCamera(x, y, z, yaw, speed, boosting, dt, snap = false, zoom = 1, pitch = 0, roll = 0) {
     // Kart basis: forward and up vectors including pitch/roll.
-    this._camQ.setFromEuler(this._camE.set(pitch * 0.85, yaw, roll * 0.85));
+    // A full orientation (loops, barrel rolls) overrides the yaw/pitch/roll basis.
+    if (this.chaseQ) this._camQ.copy(this.chaseQ);
+    else this._camQ.setFromEuler(this._camE.set(pitch * 0.85, yaw, roll * 0.85));
     const f = this._fwd.set(0, 0, 1).applyQuaternion(this._camQ);
     const u = this._up.set(0, 1, 0).applyQuaternion(this._camQ);
     const back = (7.2 + Math.min(Math.abs(speed), 45) * 0.03) * zoom;
@@ -171,7 +173,7 @@ export class Renderer {
     const k = snap ? 1 : 1 - Math.exp(-dt * 7);
     this._camPos.lerp(desired, k);
     this._camLook.set(x + f.x * 4 * zoom + u.x * 1.1 * zoom, y + f.y * 4 * zoom + u.y * 1.1 * zoom, z + f.z * 4 * zoom + u.z * 1.1 * zoom);
-    this._camUp.lerp(u, snap ? 1 : 1 - Math.exp(-dt * 6)).normalize();
+    this._camUp.lerp(u, snap || this.chaseQ ? 1 : 1 - Math.exp(-dt * 6)).normalize();
 
     const cam = this.camera;
     cam.position.copy(this._camPos);

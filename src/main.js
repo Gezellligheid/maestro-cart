@@ -680,7 +680,7 @@ class Game {
     const karts = this.karts;
     for (let i = 0; i < karts.length; i++) {
       const k = karts[i];
-      if (!k.simulated || k.bumpCooldown > 0 || k.ghostTimer > 0) continue;
+      if (!k.simulated || k.bumpCooldown > 0 || k.ghostTimer > 0 || k.rail) continue;
       for (let j = 0; j < karts.length; j++) {
         const o = karts[j];
         if (o === k || o.ghostTimer > 0) continue;
@@ -1268,6 +1268,7 @@ class Game {
     } else if (this.inRace && lk) {
       const view = (this.spectating && this.kartBySlot[this.spectateSlot]) || lk;
       const zoom = 1 + (view.megaScale - 1) * 0.55;
+      this.renderer.chaseQ = view.railQ || null;
       this.renderer.updateChaseCamera(view.renderX, view.renderY, view.renderZ, view.renderYaw + view.driftVisual * 0.35, view.speed, view.boostTimer > 0, dt, this._specSnap, zoom, view.visPitch || 0, view.visRoll || 0);
       this._specSnap = false;
       if (this.spectating) this._updateSpectateUI();

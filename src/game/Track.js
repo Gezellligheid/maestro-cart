@@ -18,7 +18,12 @@ const EDGE_STD = BASE_WIDTH + CURB_WIDTH + BARRIER_GAP + 0.7; // deck edge where
 const BARRIER_STEP = 3; // samples per barrier segment
 const CHECKPOINTS = 18; // one every 60 samples
 const SHORTCUT_HALF = 3.4; // dirt shortcut half-width
-const RUNOFF = 12; // open-kerb corners: grass run-off width beyond the kerb
+const RUNOFF = 12;
+const LOOP_R = 15; // Star Road loop-the-loop radius
+const LOOP_LANE = 5; // loop is one lane (±5 m) that drifts from the left half to the right half
+// Lane centre while going round (φ 0…2π): enter on the left half, come out on the right half.
+export const loopLane = (phi) => -LOOP_LANE + (2 * LOOP_LANE * phi) / (Math.PI * 2);
+const ROLL_LEN = 75; // barrel roll length (m) // open-kerb corners: grass run-off width beyond the kerb
 const GROUND_SIZE = 1400;
 const OVERPASS_RISE = 7.5;
 const BRIDGE_RISE = 5.5;
@@ -91,6 +96,8 @@ export class Track {
     this.movers = [];
     this.shortcuts = [];
     this.viaducts = [];
+    this.loops = [];
+    this.rolls = [];
     this.crossings = [];
     this.terrain = null;
 
@@ -148,6 +155,7 @@ export class Track {
     this._buildBarriers();
     this._buildShortcuts();
     this._buildOpenEdges();
+    this._buildStunts();
     this._buildGantry();
     this._buildArches();
     this._buildFeatures();
@@ -527,6 +535,8 @@ export class Track {
     this.hazards = [];
     this.movers = [];
     this.viaducts = [];
+    this.loops = [];
+    this.rolls = [];
 
     const blocked = [];
     const reserve = (a, b) => blocked.push([a, b]);
@@ -612,6 +622,13 @@ export class Track {
     place(bridgeCount, 120, 0.9, this.bridges, { type: t.space ? 'span' : 'water', rise: BRIDGE_RISE });
     if (!t.space && !this.terrain) place(rand() < 0.5 ? 1 : rand() < 0.5 ? 2 : 0, 75, 0.8, this.tunnels, {}, TUNNEL_HILL.width + MAX_BARRIER + 3);
     place(range(t.jumps), 11, 0.25, this.jumps, {});
+    if (t.space) {
+      // Star Road stunts on straights, well clear of other parts of the track.
+      place(rand() < 0.75 ? 1 : 2, 40, 0.06, this.loops, {}, LOOP_R * 2 + 12);
+      for (const lp of this.loops) lp.i = Math.round((lp.a + lp.b) / 2);
+      place(1, ROLL_LEN + 10, 0.06, this.rolls, {}, 20);
+      for (const r of this.rolls) { r.a += 5; r.b -= 5; }
+    }
     // Moving hazards (cows, snowballs, fire bars…) on fairly straight bits.
     place(3 + Math.floor(rand() * 4), 10, 0.5, this.movers, { kind: MOVER_KIND[t.id] });
     for (const m of this.movers) {
@@ -636,6 +653,8 @@ export class Track {
     for (const br of this.bridges) zero(br.a - 6, br.b + 6);
     for (const c of this.crossings) zero(c.lower - 40, c.lower + 40);
     for (const tu of this.tunnels) zero(tu.a - 10, tu.b + 10);
+    for (const r of this.rolls) zero(r.a - 10, r.b + 10);
+    for (const lp of this.loops) zero(lp.a - 6, lp.b + 6);
     blurCircular(mask, 14, 2);
     for (const br of this.bridges) for (let i = br.a; i <= br.b; i++) mask[circ(i)] = 0;
     for (const tu of this.tunnels) for (let i = tu.a - 4; i <= tu.b + 4; i++) mask[circ(i)] = 0;
@@ -703,6 +722,8 @@ export class Track {
     for (const br of this.bridges) flat(br.a - 4, br.b + 4);
     for (const tu of this.tunnels) flat(tu.a - 8, tu.b + 8);
     for (const jp of this.jumps) flat(jp.a - 10, jp.b + 12);
+    for (const r of this.rolls) flat(r.a - 10, r.b + 10);
+    for (const lp of this.loops) flat(lp.a - 8, lp.b + 8);
     for (const c of this.crossings) flat(c.lower - 36, c.lower + 36);
     blurCircular(bankMask, 8, 2);
     for (const tu of this.tunnels) for (let i = tu.a - 2; i <= tu.b + 2; i++) bankMask[circ(i)] = 0;
@@ -744,6 +765,7 @@ export class Track {
       if (circDist(a, 0) < Math.ceil(50 / seg)) continue;
       if (this.pads.some((p) => circDist(p.a, a) < 25)) continue;
       if (!straight(a, a + padLen)) continue;
+      if (this.rolls.some((r) => this._inRange(a, r.a - 10, r.b + 10)) || this.loops.some((lp) => circDist(a, lp.i) < 25)) continue;
       const w = this.width[circ(a)] - 2.4;
       this.pads.push({ a, b: a + padLen, lat: (rand() * 2 - 1) * w, half: 1.9 });
     }
@@ -775,6 +797,92 @@ export class Track {
       for (const shift of [0, S, -S]) if (i + shift >= br.deckA && i + shift < br.deckB) return br;
     }
     return null;
+  }
+
+  _rollAt(i) {
+    for (const r of this.rolls) if (this._inRange(i, r.a, r.b)) return r;
+    return null;
+  }
+
+  // ------------------------------------------------------------------ Star Road stunts
+
+  /**
+   * Loop-the-loop at sample lp.i: a vertical circle tangent to the road. φ = 0…2π.
+   * Writes the surface point, travel direction and surface normal (towards the centre).
+   */
+  loopPose(lp, phi, lat, out) {
+    const i = circ(lp.i);
+    const fx = this.tx[i], fz = this.tz[i];
+    const p = this.pointAt(i, lat, 0, this._lp || (this._lp = { x: 0, z: 0 }));
+    const base = this.roadY(i, lat);
+    const s = Math.sin(phi), c = Math.cos(phi);
+    out.x = p.x + fx * LOOP_R * s;
+    out.y = base + LOOP_R * (1 - c);
+    out.z = p.z + fz * LOOP_R * s;
+    out.fx = fx * c; out.fy = s; out.fz = fz * c;
+    out.ux = -fx * s; out.uy = c; out.uz = -fz * s;
+    return out;
+  }
+
+  /** Barrel roll over r.a…r.b: the road twists a full turn around an axis above its centre. */
+  rollPose(r, t, lat, out) {
+    const fi = r.a + (r.b - r.a) * t;
+    const i0 = Math.floor(fi), w = fi - i0;
+    const j0 = circ(i0), j1 = circ(i0 + 1);
+    const cx = this.px[j0] + (this.px[j1] - this.px[j0]) * w, cz = this.pz[j0] + (this.pz[j1] - this.pz[j0]) * w;
+    const cy = this.height[j0] + (this.height[j1] - this.height[j0]) * w;
+    const fx = this.tx[j0], fz = this.tz[j0];
+    const rx = -fz, rz = fx; // right
+    const Rb = BASE_WIDTH + CURB_WIDTH;
+    const psi = Math.PI * 2 * (t - Math.sin(Math.PI * 2 * t) / (Math.PI * 2)); // eased full turn
+    const c = Math.cos(psi), s = Math.sin(psi);
+    // v' = (r cosψ − u sinψ)·lat − (u cosψ + r sinψ)·Rb, about the axis at centre + u·Rb.
+    out.x = cx + (rx * c) * lat - (rx * s) * Rb;
+    out.y = cy + Rb + (-s) * lat - c * Rb;
+    out.z = cz + (rz * c) * lat - (rz * s) * Rb;
+    out.ux = rx * s; out.uy = c; out.uz = rz * s;
+    out.fx = fx; out.fy = 0; out.fz = fz;
+    return out;
+  }
+
+  /** Twisted barrel-roll ribbons and loop ribbons (rainbow, with glowing edge rails). */
+  _buildStunts() {
+    if (!this.loops.length && !this.rolls.length) return;
+    const rb = new RibbonBuilder();
+    const P = { x: 0, y: 0, z: 0 }, Q = { x: 0, y: 0, z: 0 };
+    const W = BASE_WIDTH + CURB_WIDTH;
+    const LAT = 8;
+    const strip = (pose, feature, t0, t1, k, hex) => {
+      const l0 = -W + (2 * W * k) / LAT, l1 = -W + (2 * W * (k + 1)) / LAT;
+      const a = pose(feature, t0, l1, { ...P }), b = pose(feature, t1, l1, { ...P });
+      const c = pose(feature, t1, l0, { ...P }), d = pose(feature, t0, l0, { ...P });
+      rb.quad(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z, d.x, d.y, d.z, hex);
+    };
+    const rail = (pose, feature, t0, t1, lat, hex) => {
+      const a = pose(feature, t0, lat, { ...P }), b = pose(feature, t1, lat, { ...P });
+      const h = 0.9;
+      rb.quad(a.x, a.y, a.z, b.x, b.y, b.z, b.x + b.ux * h, b.y + b.uy * h, b.z + b.uz * h, a.x + a.ux * h, a.y + a.uy * h, a.z + a.uz * h, hex);
+    };
+    const build = (pose, feature, from, to, n) => {
+      for (let s = 0; s < n; s++) {
+        const t0 = from + ((to - from) * s) / n, t1 = from + ((to - from) * (s + 1)) / n;
+        for (let k = 0; k < LAT; k++) strip(pose, feature, t0, t1, k, rainbowColor(s + k));
+        rail(pose, feature, t0, t1, W, rainbowColor(s + 3));
+        rail(pose, feature, t0, t1, -W, rainbowColor(s + 3));
+      }
+    };
+    // Loops: one lane wide, drifting sideways as it goes round so entry and exit sit side by side.
+    const lane = (f, t, l, o) => {
+      this.loopPose(f, t, loopLane(t) + (l / W) * LOOP_LANE, o);
+      o.x += o.ux * 0.06; o.y += o.uy * 0.06; o.z += o.uz * 0.06; // just above the road at the bottom
+      return o;
+    };
+    for (const lp of this.loops) build(lane, lp, 0, Math.PI * 2, 80);
+    for (const r of this.rolls) build((f, t, l, o) => this.rollPose(f, t, l, o), r, 0, 1, 60);
+    void Q;
+    const mat = this.renderer.basic({ vertexColors: true });
+    mat.side = THREE.DoubleSide;
+    this.group.add(new THREE.Mesh(rb.build(), mat));
   }
 
   _viaductAt(i) {
@@ -1184,6 +1292,7 @@ export class Track {
     const inJump = (i) => this.jumps.some((jp) => this._inRange(i, jp.a, jp.b + 1));
 
     for (let i = 0; i < S; i++) {
+      if (this._rollAt(i)) continue; // drawn as a twisted ribbon instead
       let asphalt = Math.floor(i / 8) % 2 === 0 ? R.a : R.b;
       if (R.rainbow) asphalt = rainbowColor(Math.floor(i / 4));
       if (R.planks) asphalt = i % 2 === 0 ? R.a : R.b;
@@ -1701,6 +1810,7 @@ export class Track {
   /** Is barrier segment k on this side cut open for a shortcut? */
   _barrierCut(side, k) {
     if (this._open && this._open[side][k]) return true;
+    for (const r of this.rolls) if (this._inRange(k * BARRIER_STEP, r.a - 1, r.b + 1)) return true;
     for (const sc of this.shortcuts) if (sc.side === side && sc.cut.has(k)) return true;
     return false;
   }
@@ -2290,6 +2400,7 @@ export class Track {
     }
     while (spots.length < TOTAL) {
       const i = 30 + Math.floor(rand() * (S - 50));
+      if (this._rollAt(i) || this._rollAt(i + 8) || this.loops.some((lp) => circDist(i, lp.i) < 12)) continue;
       if (boxRows.some((r) => Math.abs(r - i) < 8)) continue;
       const size = Math.min(TOTAL - spots.length, 1 + Math.floor(rand() * rand() * 4));
       const w = this.width[i] - 1.5;

@@ -171,8 +171,14 @@ export class KartRenderer {
       const trick = k.trickTimer > 0 ? (1 - k.trickTimer / 0.5) * Math.PI * 2 : 0;
       this._e.set(k.visPitch, visualYaw, lean + k.visRoll + trick);
       this._q.setFromEuler(this._e);
+      if (k.railQ && k.railUp) {
+        // Loop / barrel roll: sit on the stunt surface, whatever way up that is.
+        this._q.copy(k.railQ);
+        const ax = k.prevX + (k.x - k.prevX) * a, ay = k.prevY + (k.y - k.prevY) * a, az = k.prevZ + (k.z - k.prevZ) * a;
+        k.renderX = ax - k.railUp.x * radius; k.renderY = ay - k.railUp.y * radius; k.renderZ = az - k.railUp.z * radius;
+      }
       this._s.set(scale, scale, scale);
-      this._kartMat.compose(this._p.set(x, y + bob, z), this._q, this._s);
+      this._kartMat.compose(k.railQ ? this._p.set(k.renderX, k.renderY, k.renderZ) : this._p.set(x, y + bob, z), this._q, this._s);
 
       const base = i * PARTS_PER_KART;
       // Ghosts flicker in and out.

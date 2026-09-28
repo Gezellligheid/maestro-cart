@@ -1,6 +1,8 @@
+import * as THREE from 'three';
 import { KART, DRIFT_TIERS, ITEM, ITEMS, TOTAL_LAPS } from './constants.js';
 import { baseMods, MEGA } from './Upgrades.js';
 import { DEFAULT_LOOK } from './Cosmetics.js';
+import { loopLane } from './Track.js';
 
 const TAU = Math.PI * 2;
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -62,6 +64,11 @@ export class Kart {
     this.ghostTimer = 0; // intangible, can't be hit
     this.rocketTimer = 0; // autopilot rocket
     this.starTimer = 0; // Super Star: invincible, faster, spins anyone you touch
+    this.rail = null; // riding a loop / barrel roll: { kind, feature, t, lat, speed }
+    this.railQ = null; // full orientation while on a stunt (renderer + camera)
+    this.railUp = null;
+    this._railCooldown = 0;
+    this._railPose = { x: 0, y: 0, z: 0, fx: 0, fy: 0, fz: 0, ux: 0, uy: 1, uz: 0 };
     this.goldenTimer = 0; // Golden Mushroom: unlimited boosts while it lasts
     this.stallTimer = 0; // botched start: engine stalls
     this.canTrick = false; // launched off a ramp/crest: a hop press in the air does a trick
@@ -156,6 +163,11 @@ export class Kart {
   simulate(dt, input) {
     const C = KART;
     this.prevX = this.x; this.prevY = this.y; this.prevZ = this.z; this.prevYaw = this.yaw;
+    if (this._railCooldown > 0) this._railCooldown -= dt;
+    if (this.rail || this._maybeStartRail()) {
+      this._rideRail(dt, input);
+      return;
+    }
 
     const v = this.body.linvel();
     const t = this.body.translation();
@@ -425,13 +437,123 @@ export class Kart {
     this.driftTier = 0;
   }
 
+  /** Remote karts: if they're up on a loop / in a barrel roll, orient them like the rider does. */
+  _remoteRailPose() {
+    const tr = this.track;
+    this.railQ = null;
+    this.railUp = null;
+    if (!tr || (!tr.loops.length && !tr.rolls.length)) return;
+    const P = this._railPose;
+    let hit = false;
+    for (const lp of tr.loops) {
+      const i = lp.i % tr.samples;
+      const fx = tr.tx[i], fz = tr.tz[i];
+      const ox = this.x - tr.px[i], oz = this.z - tr.pz[i];
+      const along = ox * fx + oz * fz;
+      const up = this.y - tr.heightAt(i) - 15; // relative to the loop centre
+      if (Math.abs(along) > 17 || this.y - tr.heightAt(i) < 1.5) continue;
+      const phi = Math.atan2(along, -up);
+      const lat = -ox * fz + oz * fx;
+      tr.loopPose(lp, (phi + Math.PI * 2) % (Math.PI * 2), lat, P);
+      hit = true;
+      break;
+    }
+    if (!hit) {
+      const r = tr.rolls.find((rr) => tr._inRange(this.trackIdx, rr.a, rr.b));
+      if (r) {
+        const t = (((this.trackIdx - r.a) % tr.samples) + tr.samples) % tr.samples / (r.b - r.a);
+        tr.rollPose(r, Math.min(1, t), 0, P);
+        hit = true;
+      }
+    }
+    if (!hit) return;
+    const m = this._railM || (this._railM = new THREE.Matrix4());
+    const fwd = (this._railF || (this._railF = new THREE.Vector3())).set(P.fx, P.fy, P.fz).normalize();
+    const up = (this._railU || (this._railU = new THREE.Vector3())).set(P.ux, P.uy, P.uz).normalize();
+    const right = (this._railR || (this._railR = new THREE.Vector3())).crossVectors(up, fwd).normalize();
+    m.makeBasis(right, up, fwd);
+    this.railQ = (this._railQr || (this._railQr = new THREE.Quaternion())).setFromRotationMatrix(m);
+    this.railUp = up;
+  }
+
+  /** Enter a loop / barrel roll when the kart reaches one going forwards. */
+  _maybeStartRail() {
+    const tr = this.track;
+    if (this._railCooldown > 0 || !this.grounded || this.speed < 6 || this.spinTimer > 0) return false;
+    if (!tr.loops.length && !tr.rolls.length) return false;
+    const idx = this.trackIdx, S = tr.samples;
+    const ahead = (target) => ((idx - target) % S + S) % S <= 2;
+    const lat = Math.max(-9, Math.min(9, this.trackLateral || 0));
+    for (const lp of tr.loops) {
+      if (ahead(lp.i)) { this.rail = { kind: 'loop', f: lp, t: 0, lat: 0, entry: lat, speed: this.speed }; break; }
+    }
+    if (!this.rail) {
+      for (const r of tr.rolls) {
+        if (ahead(r.a)) { this.rail = { kind: 'roll', f: r, t: 0, lat, speed: this.speed }; break; }
+      }
+    }
+    if (this.rail) this._cancelDrift();
+    return !!this.rail;
+  }
+
+  /** On rails through a stunt: speed is kept (at least a brisk minimum), steering slides sideways. */
+  _rideRail(dt, input) {
+    const r = this.rail, tr = this.track, P = this._railPose;
+    const spd = Math.max(r.speed, 26) * (this.boostTimer > 0 ? 1.15 : 1);
+    if (this.boostTimer > 0) this.boostTimer -= dt;
+    const steer = this.controlsEnabled ? input.steer : 0;
+    const lim = r.kind === 'loop' ? 3.8 : 8.5; // the loop is a single lane
+    r.lat = Math.max(-lim, Math.min(lim, r.lat + steer * 7 * dt));
+    const len = r.kind === 'loop' ? Math.PI * 2 * 15 : (r.f.b - r.f.a) * tr.segmentLength;
+    r.t += (spd * dt) / len;
+    const done = r.t >= 1;
+    const t = Math.min(1, r.t);
+    if (r.kind === 'loop') {
+      // Ease from where you entered into the loop's lane over the first few metres.
+      const phi = t * Math.PI * 2;
+      const e = Math.min(1, phi / 0.6);
+      const k = e * e * (3 - 2 * e);
+      tr.loopPose(r.f, phi, r.entry + (loopLane(phi) + r.lat - r.entry) * k, P);
+    }
+    else tr.rollPose(r.f, t, r.lat, P);
+    const rad = this.radius;
+    const pos = this._pos;
+    pos.x = P.x + P.ux * rad; pos.y = P.y + P.uy * rad; pos.z = P.z + P.uz * rad;
+    this.body.setTranslation(pos, true);
+    this._vel.x = P.fx * spd; this._vel.y = P.fy * spd; this._vel.z = P.fz * spd;
+    this.body.setLinvel(this._vel, true);
+    this.x = pos.x; this.y = pos.y; this.z = pos.z;
+    this.speed = spd;
+    this.grounded = true;
+    this.driftTier = 0;
+    // Orientation from the path's forward / up vectors.
+    const m = this._railM || (this._railM = new THREE.Matrix4());
+    const fwd = this._railF || (this._railF = new THREE.Vector3());
+    const up = this._railU || (this._railU = new THREE.Vector3());
+    const right = this._railR || (this._railR = new THREE.Vector3());
+    fwd.set(P.fx, P.fy, P.fz).normalize();
+    up.set(P.ux, P.uy, P.uz).normalize();
+    right.crossVectors(up, fwd).normalize();
+    m.makeBasis(right, up, fwd);
+    this.railQ = (this.railQ || new THREE.Quaternion()).setFromRotationMatrix(m);
+    this.railUp = up;
+    if (done) {
+      this.rail = null;
+      this.railQ = null;
+      this.railUp = null;
+      this._railCooldown = 1.2;
+      this.yaw = Math.atan2(P.fx, P.fz);
+      this.prevYaw = this.yaw;
+    }
+  }
+
   applyMushroom() {
     this.boostTimer = Math.max(this.boostTimer, KART.mushroomDuration);
     this.pendingImpulse += KART.mushroomImpulse;
   }
 
   spinOut() {
-    if (this.spinTimer > 0 || this.megaTimer > 0 || this.ghostTimer > 0 || this.rocketTimer > 0 || this.starTimer > 0) return false;
+    if (this.spinTimer > 0 || this.megaTimer > 0 || this.ghostTimer > 0 || this.rocketTimer > 0 || this.starTimer > 0 || this.rail) return false;
     if (this.shieldTimer > 0) {
       // The bubble absorbs the hit.
       this.shieldTimer = 0;
@@ -655,6 +777,7 @@ export class Kart {
 
   /** Advance remote-only visual state each frame. */
   updateRemoteVisuals(dt) {
+    this._remoteRailPose();
     if (this.trickTimer > 0) this.trickTimer -= dt;
     this._updateScale(dt);
     const driftTarget = this.drifting ? -this.driftDir * 0.26 : 0;

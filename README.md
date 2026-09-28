@@ -29,6 +29,9 @@ public broker handles signalling only; gameplay traffic is direct WebRTC.
   volcano with lava streaks and lava lakes, lakes in the valleys. The layout is fitted onto it and
   the road follows the ground (max 10% grade): where a mountain is in the way it tunnels through,
   over valleys and lakes it crosses on viaducts with pillars, along slopes it runs in cliff cuttings.
+- **Star Road stunts**: loop-the-loops (one lane that drifts sideways, so you come out beside where
+  you went in) and barrel rolls where the road twists a full turn. Karts ride them on rails at speed
+  (you can still steer across the lane), the camera goes upside down with you, and you can't be hit.
 - **Open-kerb corners**: some bends have no barrier, just kerbs and a flat grass run-off (slow)
   with striped boards at its edge.
 - **Moving hazards** per theme (cows, tumbleweeds, rolling snowballs, hopping mushrooms, crabs,
